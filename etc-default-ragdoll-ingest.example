@@ -17,3 +17,4 @@ RAGDOLL_INGEST_PATH=/path/to/your/ingest/folder
 # RAGDOLL_OLLAMA_HOST=http://localhost:11434
 # RAGDOLL_EMBED_MODEL=nomic-embed-text:latest
 # RAGDOLL_CHUNK_MODEL=llama3.2:3b
+# RAGDOLL_CHUNK_LLM_TIMEOUT=300

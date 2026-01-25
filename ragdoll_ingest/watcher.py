@@ -29,6 +29,9 @@ def _is_supported(p: Path) -> bool:
 
 
 def _should_ignore(p: Path, root: Path) -> bool:
+    # macOS resource-fork / AppleDouble files (._*) are not real documents; PyMuPDF etc. fail on them
+    if p.name.startswith("._"):
+        return True
     try:
         r = p.resolve().relative_to(root.resolve())
     except ValueError:

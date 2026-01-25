@@ -66,7 +66,7 @@ def _llm_split_long(text: str, ollama_url: str) -> list[str]:
                 "stream": False,
                 "format": "json",
             },
-            timeout=120,
+            timeout=config.CHUNK_LLM_TIMEOUT,
         )
         r.raise_for_status()
         data = r.json()

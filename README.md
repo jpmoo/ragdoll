@@ -54,6 +54,7 @@ Optional env vars:
 | `RAGDOLL_CHUNK_MODEL` | `llama3.2:3b` | Model for semantic splitting of long paragraphs |
 | `RAGDOLL_TARGET_CHUNK_TOKENS` | `400` | Target size per chunk |
 | `RAGDOLL_MAX_CHUNK_TOKENS` | `600` | Max before LLM-assisted split |
+| `RAGDOLL_CHUNK_LLM_TIMEOUT` | `300` | Seconds to wait for Ollama when splitting long paragraphs (fallback: mid-split) |
 | `RAGDOLL_ACTION_LOG` | `{DATA_DIR}/action.log` | JSONL log of AI calls, file moves, extract/chunk/store (no embeddings) |
 
 ## Run manually
