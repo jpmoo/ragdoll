@@ -127,3 +127,21 @@ All outputs live in the **output folder** (`RAGDOLL_OUTPUT_PATH` or `RAGDOLL_DAT
 - **Processed** (`processed.jsonl`) — Dedup ledger: one `{path, mtime, size}` per successfully ingested file.
 
 - **Action log** (`action.log`, or `RAGDOLL_ACTION_LOG`) — JSONL of AI calls (embed, chunk_llm), file moves (src/to/reason), and other actions. Embedding vectors and long text are not written.
+
+## Updating the app (on your server)
+
+From the install directory (e.g. `/opt/ragdoll`):
+
+```bash
+cd /opt/ragdoll
+git pull origin main
+.venv/bin/pip install -e .
+```
+
+If you run as a systemd service, restart it:
+
+```bash
+sudo systemctl restart ragdoll-ingest
+```
+
+Your `env.ragdoll`, `data/`, and `sources/` are untouched by `git pull`. If `env.ragdoll.example` gains new variables, copy the new lines into your `env.ragdoll` as needed.
