@@ -1,7 +1,27 @@
-"""Configuration from environment variables."""
+"""Configuration from environment variables and optional env.ragdoll file."""
 
 import os
 from pathlib import Path
+
+
+def _load_env_file() -> None:
+    """Load KEY=value lines from env.ragdoll (project root) or path in RAGDOLL_ENV. setdefault so env overrides."""
+    path = os.environ.get("RAGDOLL_ENV")
+    path = Path(path).expanduser().resolve() if path else Path(__file__).resolve().parents[1] / "env.ragdoll"
+    if path.exists():
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                eq = line.find("=")
+                if eq >= 0:
+                    k, v = line[:eq].strip(), line[eq + 1 :].strip()
+                    if k:
+                        os.environ.setdefault(k, v)
+
+
+_load_env_file()
 
 
 def get_env(key: str, default: str | None = None) -> str | None:

@@ -22,6 +22,19 @@ pip install -e .
 
 ## Configuration
 
+### One file: `env.ragdoll`
+
+Copy `env.ragdoll.example` to `env.ragdoll` in the project root, edit it, and the app will load all variables from it at startup (environment variables override the file):
+
+```bash
+cp env.ragdoll.example env.ragdoll
+# edit env.ragdoll: set RAGDOLL_INGEST_PATH and any optional paths/models
+```
+
+For systemd, point the unit at it: `EnvironmentFile=/opt/ragdoll/env.ragdoll` (or keep using `/etc/default/ragdoll-ingest`). To use a different path, set `RAGDOLL_ENV=/path/to/your.env` before starting.
+
+### Or use environment variables
+
 Set the **ingest path** (required):
 
 ```bash
