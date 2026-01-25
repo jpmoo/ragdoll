@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ragdoll-ingest"
+version = "0.1.0"
+description = "Background service that watches an ingest folder, extracts text, chunks with LLM, embeds with Ollama, and appends to a RAG samples store."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "watchdog>=4.0.0",
+    "requests>=2.31.0",
+    "python-docx>=1.1.0",
+    "openpyxl>=3.1.0",
+    "xlrd>=2.0.1",
+    "PyMuPDF>=1.24.0",
+    "Pillow>=10.0.0",
+    "pytesseract>=0.3.10",
+]
+
+[project.scripts]
+ragdoll-ingest = "ragdoll_ingest.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ragdoll_ingest*"]

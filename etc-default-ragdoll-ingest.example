@@ -1,0 +1,19 @@
+# Copy to /etc/default/ragdoll-ingest (or use with EnvironmentFile in the systemd unit)
+# and set your ingest path.
+
+# Required: folder to watch for new files
+RAGDOLL_INGEST_PATH=/path/to/your/ingest/folder
+
+# Optional: output folder for RAG JSONL and sources (original docs move into output/sources/)
+# RAGDOLL_OUTPUT_PATH=/var/lib/ragdoll
+# or: RAGDOLL_DATA_DIR=/var/lib/ragdoll
+
+# Optional: action log (AI calls, moves, extract/chunk/store; no embeddings)
+# RAGDOLL_ACTION_LOG=/var/lib/ragdoll/action.log
+
+# Optional overrides:
+# RAGDOLL_SAMPLES=/var/lib/ragdoll/rag_samples.jsonl
+# RAGDOLL_PROCESSED=/var/lib/ragdoll/processed.jsonl
+# RAGDOLL_OLLAMA_HOST=http://localhost:11434
+# RAGDOLL_EMBED_MODEL=nomic-embed-text:latest
+# RAGDOLL_CHUNK_MODEL=llama3.2:3b

@@ -1,0 +1,27 @@
+[Unit]
+Description=RAGDoll Ingest: watch folder, extract/chunk/embed, add to RAG samples
+After=network-online.target ollama.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Required: set RAGDOLL_INGEST_PATH to the folder to watch
+EnvironmentFile=-/etc/default/ragdoll-ingest
+# Override via: systemctl edit ragdoll-ingest
+#   [Service]
+#   Environment="RAGDOLL_INGEST_PATH=/path/to/ingest"
+#   User=myuser
+#   Group=myuser
+#   WorkingDirectory=/opt/ragdoll
+#   ExecStart=/opt/ragdoll/.venv/bin/python -m ragdoll_ingest
+
+WorkingDirectory=/opt/ragdoll
+ExecStart=/usr/bin/python3 -m ragdoll_ingest
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ragdoll-ingest
+
+[Install]
+WantedBy=multi-user.target

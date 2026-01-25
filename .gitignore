@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+data/
+*.db
+rag_samples.jsonl
+processed.jsonl
+action.log
+*.egg-info/
+.eggs/
+dist/
+build/
