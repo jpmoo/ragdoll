@@ -31,7 +31,7 @@ class TableRegion:
 
 
 @dataclass
-class FlowchartRegion:
+class FigureRegion:
     page: int
     image_bytes: bytes  # rendered page or crop
 
@@ -49,13 +49,13 @@ class Document:
     text_blocks: list[TextBlock] = field(default_factory=list)
     chart_regions: list[ChartRegion] = field(default_factory=list)
     table_regions: list[TableRegion] = field(default_factory=list)
-    flowchart_regions: list[FlowchartRegion] = field(default_factory=list)
+    figure_regions: list[FigureRegion] = field(default_factory=list)
     image_regions: list[ImageRegion] = field(default_factory=list)
 
     def has_embeddable(self) -> bool:
         return bool(
             self.text_blocks or self.chart_regions or self.table_regions
-            or self.flowchart_regions or self.image_regions
+            or self.figure_regions or self.image_regions
         )
 
 
@@ -125,7 +125,7 @@ def _extract_pdf_document(path: Path) -> Document:
             page_num = pagenum + 1
             raw = page.get_text()
             images = page.get_images(full=True)
-            # Many short blocks or vector drawings -> flowchart (boxes, arrows, labels)
+            # Many short blocks or vector drawings -> figure (boxes, arrows, labels)
             blocks = (page.get_text("dict") or {}).get("blocks") or []
             short = [b for b in blocks if sum(len(s.get("text", "")) for l in b.get("lines", []) for s in l.get("spans", [])) < 80]
             try:
@@ -133,21 +133,21 @@ def _extract_pdf_document(path: Path) -> Document:
             except Exception:
                 drawings = []
 
-            # Prefer flowchart when we see diagram signals. Check before chart so flowcharts
+            # Prefer figure when we see diagram signals. Check before chart so figures
             # with small embedded images still get process interpretation.
             # - drawings + <1000 chars: strong diagram signal (arrows, boxes)
             # - no drawings: <800 chars and >=1 short block (labels in small blocks)
-            is_flowchart = (drawings and len(raw.strip()) < 1000) or (
+            is_figure = (drawings and len(raw.strip()) < 1000) or (
                 len(raw.strip()) < 800 and len(short) >= 1
             )
-            if is_flowchart:
+            if is_figure:
                 try:
-                    out.flowchart_regions.append(
-                        FlowchartRegion(page=page_num, image_bytes=_page_to_png_bytes(page))
+                    out.figure_regions.append(
+                        FigureRegion(page=page_num, image_bytes=_page_to_png_bytes(page))
                     )
                 except Exception as e:
-                    logger.warning("Could not render flowchart page %s: %s", page_num, e)
-            # Low text + has images (and not flowchart above) -> chart regions
+                    logger.warning("Could not render figure page %s: %s", page_num, e)
+            # Low text + has images (and not figure above) -> chart regions
             elif len(raw.strip()) < 200 and images:
                 for im in images:
                     xref = im[0]
@@ -161,9 +161,9 @@ def _extract_pdf_document(path: Path) -> Document:
             elif raw.strip():
                 out.text_blocks.append(TextBlock(page=page_num, text=raw))
 
-        # Drop pdfplumber tables on flowchart pages; they are usually layout noise, not real tables.
-        flow_pages = {f.page for f in out.flowchart_regions}
-        out.table_regions = [t for t in out.table_regions if t.page not in flow_pages]
+        # Drop pdfplumber tables on figure pages; they are usually layout noise, not real tables.
+        figure_pages = {f.page for f in out.figure_regions}
+        out.table_regions = [t for t in out.table_regions if t.page not in figure_pages]
     finally:
         doc.close()
     return out

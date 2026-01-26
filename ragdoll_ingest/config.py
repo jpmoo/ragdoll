@@ -100,8 +100,13 @@ FAILED_SUBDIR = "failed"
 OLLAMA_HOST = get_env("RAGDOLL_OLLAMA_HOST") or get_env("OLLAMA_HOST") or "http://localhost:11434"
 EMBED_MODEL = get_env("RAGDOLL_EMBED_MODEL") or "nomic-embed-text:latest"
 CHUNK_MODEL = get_env("RAGDOLL_CHUNK_MODEL") or "llama3.2:3b"
-# LLM for chart/table/flowchart interpretation (qualitative summaries; no numeric guessing)
+# LLM for chart/table/figure interpretation (qualitative summaries; no numeric guessing)
 INTERPRET_MODEL = get_env("RAGDOLL_INTERPRET_MODEL") or CHUNK_MODEL
+# LLM for query expansion (standalone description of information need)
+QUERY_MODEL = get_env("RAGDOLL_QUERY_MODEL") or "llama3.2:3b"
+
+# API server
+API_PORT = int(get_env("RAGDOLL_API_PORT") or "9042")
 
 # Chunking
 TARGET_CHUNK_TOKENS = int(get_env("RAGDOLL_TARGET_CHUNK_TOKENS") or "400")

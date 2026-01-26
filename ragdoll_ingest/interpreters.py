@@ -62,7 +62,7 @@ def interpret_chart(ocr_text: str, group: str = "_root") -> str:
     return fallback
 
 
-def interpret_flowchart(ocr_text: str, group: str = "_root") -> tuple[str, dict]:
+def interpret_figure(ocr_text: str, group: str = "_root") -> tuple[str, dict]:
     """
     Infer process: steps, decisions, conditions, actors, end states. State uncertainty if unclear.
     Returns (summary: str for embedding, process_dict for storage).
@@ -70,7 +70,7 @@ def interpret_flowchart(ocr_text: str, group: str = "_root") -> tuple[str, dict]
     """
     model = config.INTERPRET_MODEL
     prompt = (
-        "You are analyzing a flowchart or process diagram for a RAG system. Use ONLY the OCR text from the diagram.\n"
+        "You are analyzing a figure or process diagram for a RAG system. Use ONLY the OCR text from the diagram.\n"
         "Infer: steps, decisions (with conditions), actors, and end states. If order or branching is unclear, state the uncertainty. "
         "Do not include 'RAG' or 'RAG system' in your summary. "
         f"{AUTH}\n\n"
@@ -82,10 +82,10 @@ def interpret_flowchart(ocr_text: str, group: str = "_root") -> tuple[str, dict]
     if isinstance(obj, dict) and obj.get("summary"):
         summary = str(obj["summary"]).strip()
         process = {k: obj[k] for k in ("steps", "decisions", "actors", "end_states") if k in obj}
-        action_log("interpret_flowchart", model=model, group=group)
+        action_log("interpret_figure", model=model, group=group)
         return summary, process
-    fallback = f"Flowchart: {ocr_text[:500].strip() or 'no OCR text'}." if ocr_text else "Flowchart: no OCR text."
-    action_log("interpret_flowchart", model=model, fallback=True, group=group)
+    fallback = f"Figure: {ocr_text[:500].strip() or 'no OCR text'}." if ocr_text else "Figure: no OCR text."
+    action_log("interpret_figure", model=model, fallback=True, group=group)
     return fallback, {"steps": [], "decisions": [], "actors": [], "end_states": []}
 
 

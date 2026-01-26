@@ -107,10 +107,10 @@ python -m ragdoll_ingest
 ## Supported file types
 
 - **Text**: `.txt`, `.md`, `.markdown` — plain extract and chunk.
-- **Word**: `.docx` — paragraphs as prose; native tables as table regions; **embedded images** extracted, classified, and routed (chart/table/flowchart/text).
+- **Word**: `.docx` — paragraphs as prose; native tables as table regions; **embedded images** extracted, classified, and routed (chart/table/figure/text).
 - **Excel**: `.xlsx`, `.xls` — each sheet as a table region (LLM summary + stored JSON).
-- **PDF**: `.pdf` — text blocks; **tables** via pdfplumber; low-text + images → chart regions; low-text + drawings/short blocks → **flowchart** (OCR + LLM process summary, image + process JSON stored).
-- **Images**: `.png`, `.jpg`, etc. — **classified** (text/table/chart/flowchart) from OCR and routed to the right handler; only summaries or prose are embedded.
+- **PDF**: `.pdf` — text blocks; **tables** via pdfplumber; low-text + images → chart regions; low-text + drawings/short blocks → **figure** (OCR + LLM process summary, image + process JSON stored).
+- **Images**: `.png`, `.jpg`, etc. — **classified** (text/table/chart/figure) from OCR and routed to the right handler; only summaries or prose are embedded.
 
 ## Subfolders = separate groups
 
@@ -123,11 +123,11 @@ Only **one level of grouping** is used: each **direct subfolder** of the ingest 
 Each group gets its own:
 
 - **ragdoll.db** — SQLite `chunks`: `source_path`, `source_type`, `chunk_index`, `text`, `embedding`, `artifact_type`, `artifact_path`, `page`.
-- **rag_samples.jsonl** — One JSON per chunk: `text`, `embedding`, `source`, `source_type`, `chunk_index`, `artifact_type` (`text`|`chart_summary`|`table_summary`|`flowchart_summary`), `artifact_path`, `page`.
+- **rag_samples.jsonl** — One JSON per chunk: `text`, `embedding`, `source`, `source_type`, `chunk_index`, `artifact_type` (`text`|`chart_summary`|`table_summary`|`figure_summary`), `artifact_path`, `page`.
 - **processed.jsonl** — Dedup ledger: one `{path, mtime, size}` per successfully ingested file.
 - **action.log** — JSONL of AI calls, moves, extract/chunk/interpret/store, and sync actions (`sync_rebuild`, `sync_dedup`) for that group.
 - **sources/** — Ingested files moved here. Only one level of grouping: deeper paths are flattened to one filename in `sources/`.
-- **artifacts/** — Chart images (`charts/`), table JSON (`tables/`), flowchart image+process JSON (`flowcharts/`). Only interpretations are embedded; raw data is stored here.
+- **artifacts/** — Chart images (`charts/`), table JSON (`tables/`), figure image+process JSON (`figures/`). Only interpretations are embedded; raw data is stored here.
 
 If the output folder previously had a flat layout (`ragdoll.db`, `rag_samples.jsonl`, etc. at the top level), it is **migrated once** on startup into `_root/`.
 
@@ -143,7 +143,7 @@ All outputs live under the **output folder** (`RAGDOLL_OUTPUT_PATH` or `RAGDOLL_
   {"text": "...", "embedding": [...], "source": "...", "source_type": ".pdf", "chunk_index": 0, "artifact_type": "text", "artifact_path": null, "page": 1}
   ```
 
-  `artifact_type`: `text`, `chart_summary`, `table_summary`, or `flowchart_summary`. `artifact_path` points to `artifacts/charts/`, `artifacts/tables/`, or `artifacts/flowcharts/` when present.
+  `artifact_type`: `text`, `chart_summary`, `table_summary`, or `figure_summary`. `artifact_path` points to `artifacts/charts/`, `artifacts/tables/`, or `artifacts/figures/` when present.
 
   If the file is missing, it is recreated from the DB. A sync pass runs at startup and every `RAGDOLL_SYNC_INTERVAL` seconds **per group**: it deduplicates the DB (keeps one row per `source_path`+`chunk_index`), compares DB and JSONL counts, and rebuilds the JSONL from the DB when they differ or after a dedup.
 

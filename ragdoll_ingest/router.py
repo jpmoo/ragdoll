@@ -1,25 +1,25 @@
-"""Route and classify free-standing or embedded images: text, table, chart, or flowchart."""
+"""Route and classify free-standing or embedded images: text, table, chart, or figure."""
 
 import re
 
 from . import config
-from .artifacts import store_chart_image, store_flowchart, store_table
+from .artifacts import store_chart_image, store_figure, store_table
 from .chunker import chunk_text
 from .extractors import ocr_image_bytes
-from .interpreters import interpret_chart, interpret_flowchart, interpret_table
+from .interpreters import interpret_chart, interpret_figure, interpret_table
 
 
 def classify_image(ocr_text: str) -> str:
     """
-    Heuristic classification from OCR. Returns "text" | "table" | "chart" | "flowchart".
+    Heuristic classification from OCR. Returns "text" | "table" | "chart" | "figure".
     """
     t = (ocr_text or "").strip()
     lines = [ln.strip() for ln in t.splitlines() if ln.strip()]
 
-    # Flowchart: arrows, decision words, many short lines
+    # Figure: arrows, decision words, many short lines
     arrows = bool(re.search(r"->|=>|→|←|↓|↑|yes|no|start|end|decision", t, re.I))
     if arrows and len(lines) >= 3 and sum(len(l) for l in lines) / max(1, len(lines)) < 60:
-        return "flowchart"
+        return "figure"
 
     # Table: many lines with 3+ columns (tabs or 2+ spaces)
     if len(lines) >= 3:
@@ -55,7 +55,7 @@ def route_image(
     idx: int,
 ) -> list[dict]:
     """
-    OCR, classify, and route to text/chart/table/flowchart. Returns list of chunk dicts
+    OCR, classify, and route to text/chart/table/figure. Returns list of chunk dicts
     (text, artifact_type, artifact_path, page) without embedding.
     """
     ocr = ocr_image_bytes(image_bytes)
@@ -83,7 +83,7 @@ def route_image(
         ap = store_table(group, source_stem, page_or_idx, idx, data)
         return [{"text": summary, "artifact_type": "table_summary", "artifact_path": ap, "page": page_or_idx}]
 
-    # flowchart
-    summary, process = interpret_flowchart(ocr, group=group)
-    ap = store_flowchart(group, source_stem, page_or_idx or 0, idx, image_bytes, process, ocr)
-    return [{"text": summary, "artifact_type": "flowchart_summary", "artifact_path": ap, "page": page_or_idx}]
+    # figure
+    summary, process = interpret_figure(ocr, group=group)
+    ap = store_figure(group, source_stem, page_or_idx or 0, idx, image_bytes, process, ocr)
+    return [{"text": summary, "artifact_type": "figure_summary", "artifact_path": ap, "page": page_or_idx}]

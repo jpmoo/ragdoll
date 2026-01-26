@@ -25,13 +25,13 @@ def store_chart_image(group: str, source_stem: str, page: int, idx: int, image_b
     return str(p)
 
 
-def store_flowchart(
+def store_figure(
     group: str, source_stem: str, page: int, idx: int,
     image_bytes: bytes, process_dict: dict, ocr_text: str,
 ) -> str:
-    """Save flowchart image and process JSON to {group}/artifacts/flowcharts/. Returns path to the JSON."""
+    """Save figure image and process JSON to {group}/artifacts/figures/. Returns path to the JSON."""
     gp = config.get_group_paths(group)
-    d = gp.artifacts_dir / "flowcharts"
+    d = gp.artifacts_dir / "figures"
     d.mkdir(parents=True, exist_ok=True)
     stem = _safe_stem(source_stem)
     base = f"{stem}_p{page}_{idx}"

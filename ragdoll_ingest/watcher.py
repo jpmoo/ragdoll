@@ -12,11 +12,11 @@ from watchdog.observers import Observer
 
 from . import config
 from .action_log import log as action_log
-from .artifacts import store_chart_image, store_flowchart, store_table
+from .artifacts import store_chart_image, store_figure, store_table
 from .chunker import chunk_text
 from .embedder import embed
 from .extractors import extract_document, extract_text, ocr_image_bytes
-from .interpreters import interpret_chart, interpret_flowchart, interpret_table
+from .interpreters import interpret_chart, interpret_figure, interpret_table
 from .router import route_image
 from .storage import (
     _connect,
@@ -139,14 +139,14 @@ def _process_one(fpath: Path) -> None:
                 summary = interpret_table(tr.data, group=group)
                 ap = store_table(group, p.stem, tr.page, idx, tr.data)
                 chunks_list.append({"text": summary, "artifact_type": "table_summary", "artifact_path": ap, "page": tr.page})
-            for idx, fr in enumerate(doc.flowchart_regions):
+            for idx, fr in enumerate(doc.figure_regions):
                 ocr = ocr_image_bytes(fr.image_bytes)
-                summary, process = interpret_flowchart(ocr, group=group)
-                ap = store_flowchart(group, p.stem, fr.page, idx, fr.image_bytes, process, ocr)
-                chunks_list.append({"text": summary, "artifact_type": "flowchart_summary", "artifact_path": ap, "page": fr.page})
+                summary, process = interpret_figure(ocr, group=group)
+                ap = store_figure(group, p.stem, fr.page, idx, fr.image_bytes, process, ocr)
+                chunks_list.append({"text": summary, "artifact_type": "figure_summary", "artifact_path": ap, "page": fr.page})
             for idx, ir in enumerate(doc.image_regions):
                 chunks_list.extend(route_image(ir.image_bytes, ir.ext, ir.page_or_idx, group, p.stem, idx))
-            action_log("extract_ok", file=str(p), text_blocks=len(doc.text_blocks), charts=len(doc.chart_regions), tables=len(doc.table_regions), flowcharts=len(doc.flowchart_regions), images=len(doc.image_regions), group=group)
+            action_log("extract_ok", file=str(p), text_blocks=len(doc.text_blocks), charts=len(doc.chart_regions), tables=len(doc.table_regions), figures=len(doc.figure_regions), images=len(doc.image_regions), group=group)
         else:
             # Fallback: .txt, .md, or extract_document returned nothing. Standalone images: classify and route.
             if p.suffix.lower() in config.IMAGE_EXT:
