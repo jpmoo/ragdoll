@@ -137,8 +137,8 @@ def _process_one(fpath: Path) -> None:
                 ocr = ocr_image_bytes(cr.image_bytes)
                 summary = interpret_chart(ocr, group=group)
                 ap = store_chart_image(group, p.stem, cr.page, idx, cr.image_bytes, cr.image_ext)
-                filename_phrases = extract_key_phrases_from_filename(p.stem)
-                ocr_phrases = extract_key_phrases_from_text(ocr)
+                filename_phrases = extract_key_phrases_from_filename(str(p.stem) if p.stem else "")
+                ocr_phrases = extract_key_phrases_from_text(ocr or "")
                 all_phrases = list(set(filename_phrases + ocr_phrases))[:10]  # Combine, dedupe, limit
                 # Append key phrases to summary text
                 if all_phrases:
@@ -147,9 +147,9 @@ def _process_one(fpath: Path) -> None:
             for idx, tr in enumerate(doc.table_regions):
                 summary = interpret_table(tr.data, group=group)
                 ap = store_table(group, p.stem, tr.page, idx, tr.data)
-                filename_phrases = extract_key_phrases_from_filename(p.stem)
-                # Extract text from table data for key phrases
-                table_text = " ".join(" ".join(row) for row in tr.data if row)
+                filename_phrases = extract_key_phrases_from_filename(str(p.stem) if p.stem else "")
+                # Extract text from table data for key phrases (handle None values)
+                table_text = " ".join(" ".join(str(c) if c is not None else "" for c in row) for row in (tr.data or []) if row)
                 table_phrases = extract_key_phrases_from_text(table_text)
                 all_phrases = list(set(filename_phrases + table_phrases))[:10]
                 # Append key phrases to summary text
@@ -160,8 +160,8 @@ def _process_one(fpath: Path) -> None:
                 ocr = ocr_image_bytes(fr.image_bytes)
                 summary, process = interpret_figure(ocr, group=group)
                 ap = store_figure(group, p.stem, fr.page, idx, fr.image_bytes, process, ocr)
-                filename_phrases = extract_key_phrases_from_filename(p.stem)
-                ocr_phrases = extract_key_phrases_from_text(ocr)
+                filename_phrases = extract_key_phrases_from_filename(str(p.stem) if p.stem else "")
+                ocr_phrases = extract_key_phrases_from_text(ocr or "")
                 all_phrases = list(set(filename_phrases + ocr_phrases))[:10]  # Combine, dedupe, limit
                 # Append key phrases to summary text
                 if all_phrases:
