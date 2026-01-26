@@ -1,0 +1,28 @@
+[Unit]
+Description=RAGDoll API: HTTP API server for RAG queries
+After=network-online.target ollama.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Load environment from env.ragdoll or /etc/default/ragdoll-ingest
+EnvironmentFile=-/opt/ragdoll/env.ragdoll
+EnvironmentFile=-/etc/default/ragdoll-ingest
+# Override via: systemctl edit ragdoll-api
+#   [Service]
+#   Environment="RAGDOLL_API_PORT=9042"
+#   User=myuser
+#   Group=myuser
+#   WorkingDirectory=/opt/ragdoll
+#   ExecStart=/opt/ragdoll/.venv/bin/python run_api.py
+
+WorkingDirectory=/opt/ragdoll
+ExecStart=/usr/bin/python3 run_api.py
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ragdoll-api
+
+[Install]
+WantedBy=multi-user.target

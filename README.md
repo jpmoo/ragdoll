@@ -163,10 +163,53 @@ git pull origin main
 .venv/bin/pip install -e .
 ```
 
-If you run as a systemd service, restart it:
+If you run as systemd services, restart both:
 
 ```bash
-sudo systemctl restart ragdoll-ingest
+sudo systemctl restart ragdoll-ingest ragdoll-api
 ```
 
 Your `env.ragdoll`, `data/`, and `sources/` are untouched by `git pull`. If `env.ragdoll.example` gains new variables, copy the new lines into your `env.ragdoll` as needed.
+
+## API Server
+
+The HTTP API server runs separately from the ingest watcher. To install it as a systemd service:
+
+```bash
+sudo cp ragdoll-api.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now ragdoll-api
+```
+
+The API server listens on port `9042` by default (configurable via `RAGDOLL_API_PORT`).
+
+### Endpoints
+
+**`GET /rags`** — List all RAG collections (groups)
+```bash
+curl http://localhost:9042/rags
+# Returns: {"collections": ["_root", "reports", "legal", ...]}
+```
+
+**`POST /query`** — Semantic similarity search
+```bash
+curl -X POST http://localhost:9042/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "What is double-loop learning?",
+    "history": "Previous conversation...",
+    "threshold": 0.60
+  }'
+```
+
+Request body:
+- `prompt` (required): User's query/question
+- `history` (optional): Conversation history for context
+- `threshold` (optional, default: 0.60): Minimum similarity score (0.0-1.0)
+
+Response includes:
+- `query`: Original prompt
+- `expanded_query`: LLM-expanded standalone description
+- `threshold`: Used threshold
+- `count`: Number of results
+- `results`: Array of matching chunks (sorted by similarity, highest first), each with: `group`, `source_path`, `source_name`, `source_type`, `chunk_index`, `text`, `artifact_type`, `artifact_path`, `page`, `similarity`
