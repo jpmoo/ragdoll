@@ -43,7 +43,9 @@ def _split_blocks(text: str) -> list[str]:
 def _llm_split_long(text: str, ollama_url: str, group: str = "_root") -> list[str]:
     """Use LLM to split a long block into 2-3 semantic chunks. Falls back to mid-split on error."""
     # Truncate if still too long for context (leave room for prompt + response)
-    max_in = (config.MAX_CHUNK_TOKENS * 3) * CHARS_PER_TOKEN  # ~3x max chunk
+    # Ollama default context is 4096 tokens; use ~3500 tokens max to be safe (prompt + response overhead)
+    max_in_tokens = 3500
+    max_in = max_in_tokens * CHARS_PER_TOKEN  # ~3500 tokens = ~14000 chars
     if len(text) > max_in:
         text = text[:max_in] + "\n[...truncated...]"
 
@@ -83,7 +85,8 @@ def _llm_split_long(text: str, ollama_url: str, group: str = "_root") -> list[st
             action_log("chunk_llm", model=config.CHUNK_MODEL, input_len=len(text), num_chunks=len(out), fallback=False, group=group)
             return out
     except Exception as e:
-        logger.warning("LLM split failed, using mid-split: %s", e)
+        logger.warning("LLM split failed (input_len=%d chars, ~%d tokens), using mid-split: %s", 
+                       len(text), _tokens_approx(text), e)
 
     # Fallback: split near the middle at a sentence or newline
     mid = len(text) // 2
