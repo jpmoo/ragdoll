@@ -1,6 +1,6 @@
 # RAGDoll Ingest Service
 
-A Linux background service that watches an ingest folder, extracts text from incoming files (txt, md, Word, Excel, PDF, images with OCR), splits into **semantic chunks** using Ollama `llama3.2:3b`, embeds them with `nomic-embed-text:latest`, and appends to per-group **RAG samples** JSONL (for use in other tools). Subfolders in the ingest folder become separate output groups, each with its own samples, DB, and sources.
+A Linux background service that watches an ingest folder and ingests complex documents into a RAG-ready form. It follows a **multimodal** design: **prose** is chunked and embedded; **charts** and **tables** are interpreted by an LLM into qualitative summaries (no numeric guessing), with raw images and table data stored separately. Only prose chunks and these summaries are embedded. Subfolders in the ingest folder become separate output groups, each with its own samples, DB, sources, and artifacts.
 
 ## Requirements
 
@@ -8,8 +8,8 @@ A Linux background service that watches an ingest folder, extracts text from inc
 - **Python 3.10+**
 - **Ollama** with:
   - `nomic-embed-text:latest` (embeddings)
-  - `llama3.2:3b` (semantic chunking of long paragraphs)
-- **Tesseract OCR** (for images): `sudo apt install tesseract-ocr` (Debian/Ubuntu) or equivalent
+  - `llama3.2:3b` (semantic chunking of long paragraphs; chart/table interpretation)
+- **Tesseract OCR** (for images and chart regions): `sudo apt install tesseract-ocr` (Debian/Ubuntu) or equivalent
 
 ## Install
 
@@ -51,9 +51,10 @@ Optional env vars:
 | `RAGDOLL_OLLAMA_HOST` | `http://localhost:11434` | Ollama API base URL |
 | `RAGDOLL_EMBED_MODEL` | `nomic-embed-text:latest` | Embedding model |
 | `RAGDOLL_CHUNK_MODEL` | `llama3.2:3b` | Model for semantic splitting of long paragraphs |
+| `RAGDOLL_INTERPRET_MODEL` | same as `RAGDOLL_CHUNK_MODEL` | Model for chart and table interpretation (qualitative summaries; anti-hallucination) |
 | `RAGDOLL_TARGET_CHUNK_TOKENS` | `400` | Target size per chunk |
 | `RAGDOLL_MAX_CHUNK_TOKENS` | `600` | Max before LLM-assisted split |
-| `RAGDOLL_CHUNK_LLM_TIMEOUT` | `300` | Seconds to wait for Ollama when splitting long paragraphs (fallback: mid-split) |
+| `RAGDOLL_CHUNK_LLM_TIMEOUT` | `300` | Seconds to wait for Ollama (chunk split, chart/table interpret) |
 
 ## Run manually
 
@@ -105,11 +106,11 @@ python -m ragdoll_ingest
 
 ## Supported file types
 
-- **Text**: `.txt`, `.md`, `.markdown`
-- **Word**: `.docx`
-- **Excel**: `.xlsx`, `.xls`
-- **PDF**: `.pdf`
-- **Images (OCR)**: `.png`, `.jpg`, `.jpeg`, `.tiff`, `.tif`, `.bmp`, `.gif`
+- **Text**: `.txt`, `.md`, `.markdown` — plain extract and chunk.
+- **Word**: `.docx` — paragraphs as prose; native tables as table regions; **embedded images** extracted, classified, and routed (chart/table/flowchart/text).
+- **Excel**: `.xlsx`, `.xls` — each sheet as a table region (LLM summary + stored JSON).
+- **PDF**: `.pdf` — text blocks; **tables** via pdfplumber; low-text + images → chart regions; low-text + drawings/short blocks → **flowchart** (OCR + LLM process summary, image + process JSON stored).
+- **Images**: `.png`, `.jpg`, etc. — **classified** (text/table/chart/flowchart) from OCR and routed to the right handler; only summaries or prose are embedded.
 
 ## Subfolders = separate groups
 
@@ -121,11 +122,12 @@ Only **one level of grouping** is used: each **direct subfolder** of the ingest 
 
 Each group gets its own:
 
-- **ragdoll.db** — SQLite chunks for that group
-- **rag_samples.jsonl** — RAG samples for that group
-- **processed.jsonl** — Dedup ledger for that group
-- **action.log** — AI calls, moves, extract/chunk/store for that group
-- **sources/** — Ingested files moved here. Only one level of grouping: deeper paths (e.g. `legal/2024/q1/doc.pdf`) are flattened to one name (e.g. `2024_q1_doc.pdf`) so `sources/` has no subfolders.
+- **ragdoll.db** — SQLite chunks (incl. `artifact_type`, `artifact_path`, `page` for provenance).
+- **rag_samples.jsonl** — RAG samples; records include `artifact_type` (`text` | `chart_summary` | `table_summary` | `flowchart_summary`), `artifact_path`, `page`.
+- **processed.jsonl** — Dedup ledger for that group.
+- **action.log** — AI calls, moves, extract/chunk/interpret/store for that group.
+- **sources/** — Ingested files moved here. Only one level of grouping: deeper paths are flattened to one filename in `sources/`.
+- **artifacts/** — Chart images (`charts/`), table JSON (`tables/`), flowchart image+process JSON (`flowcharts/`). Only interpretations are embedded; raw data is stored here.
 
 If the output folder previously had a flat layout (`ragdoll.db`, `rag_samples.jsonl`, etc. at the top level), it is **migrated once** on startup into `_root/`.
 
@@ -133,13 +135,15 @@ If the output folder previously had a flat layout (`ragdoll.db`, `rag_samples.js
 
 All outputs live under the **output folder** (`RAGDOLL_OUTPUT_PATH` or `RAGDOLL_DATA_DIR`) in **per-group subdirs** (see above). Use each group’s JSONL or DB in your own RAG/vector tools.
 
-- **SQLite** (`{group}/ragdoll.db`) — Chunks table (source_path, source_type, chunk_index, text, embedding). Written on every ingest; kept in sync with JSONL by a background sync pass.
+- **SQLite** (`{group}/ragdoll.db`) — Chunks (source_path, source_type, chunk_index, text, embedding, artifact_type, artifact_path, page). Kept in sync with JSONL by a background sync pass.
 
-- **RAG samples** (`{group}/rag_samples.jsonl`): one JSON object per chunk, e.g.:
+- **RAG samples** (`{group}/rag_samples.jsonl`): one JSON per chunk, e.g.:
 
   ```json
-  {"text": "...", "embedding": [...], "source": "/output/reports/sources/file.pdf", "source_type": ".pdf", "chunk_index": 0}
+  {"text": "...", "embedding": [...], "source": "...", "source_type": ".pdf", "chunk_index": 0, "artifact_type": "text", "artifact_path": null, "page": 1}
   ```
+
+  `artifact_type`: `text`, `chart_summary`, `table_summary`, or `flowchart_summary`. `artifact_path` points to `artifacts/charts/`, `artifacts/tables/`, or `artifacts/flowcharts/` when present.
 
   If the file is missing, it is recreated from the DB. A sync pass runs at startup and every `RAGDOLL_SYNC_INTERVAL` seconds **per group**: it deduplicates the DB (keeps one row per `source_path`+`chunk_index`), compares DB and JSONL counts, and rebuilds the JSONL from the DB when they differ or after a dedup.
 

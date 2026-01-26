@@ -98,37 +98,59 @@ def init_db(conn: sqlite3.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS ix_chunks_source ON chunks(source_path);
     """)
+    for col, defn in [
+        ("artifact_type", "TEXT DEFAULT 'text'"),
+        ("artifact_path", "TEXT"),
+        ("page", "INTEGER"),
+    ]:
+        try:
+            conn.execute(f"ALTER TABLE chunks ADD COLUMN {col} {defn}")
+        except sqlite3.OperationalError as e:
+            if "duplicate" not in str(e).lower():
+                raise
 
 
 def add_chunks(
     conn: sqlite3.Connection,
     source_path: str,
     source_type: str,
-    chunks: list[tuple[str, list[float]]],
+    chunks: list[dict],
 ) -> None:
+    """
+    chunks: list of {text, embedding, artifact_type?, artifact_path?, page?}.
+    Defaults: artifact_type='text', artifact_path=None, page=None.
+    """
     init_db(conn)
-    for i, (text, emb) in enumerate(chunks):
+    for i, c in enumerate(chunks):
+        text = c.get("text", "")
+        emb = c.get("embedding", [])
+        atype = c.get("artifact_type", "text")
+        apath = c.get("artifact_path")
+        page = c.get("page")
         conn.execute(
-            "INSERT INTO chunks (source_path, source_type, chunk_index, text, embedding) VALUES (?, ?, ?, ?, ?)",
-            (source_path, source_type, i, text, json.dumps(emb)),
+            "INSERT INTO chunks (source_path, source_type, chunk_index, text, embedding, artifact_type, artifact_path, page) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (source_path, source_type, i, text, json.dumps(emb), atype, apath, page),
         )
 
 
 # --- JSONL (samples, per group) ---
 
-def append_samples_jsonl(chunks: list[tuple[str, list[float]]], source_path: str, source_type: str, group: str) -> None:
-    """Append new chunk samples to the group's JSONL. Holds _jsonl_lock to coordinate with build_jsonl_from_db."""
+def append_samples_jsonl(chunks: list[dict], source_path: str, source_type: str, group: str) -> None:
+    """Append new chunk samples to the group's JSONL. chunks: list of {text, embedding, artifact_type?, artifact_path?, page?}."""
     gp = config.get_group_paths(group)
     gp.group_dir.mkdir(parents=True, exist_ok=True)
     with _jsonl_lock:
         with open(gp.samples_path, "a", encoding="utf-8") as f:
-            for i, (text, emb) in enumerate(chunks):
+            for i, c in enumerate(chunks):
                 rec = {
-                    "text": text,
-                    "embedding": emb,
+                    "text": c.get("text", ""),
+                    "embedding": c.get("embedding", []),
                     "source": source_path,
                     "source_type": source_type,
                     "chunk_index": i,
+                    "artifact_type": c.get("artifact_type", "text"),
+                    "artifact_path": c.get("artifact_path"),
+                    "page": c.get("page"),
                 }
                 f.write(json.dumps(rec, ensure_ascii=False) + "\n")
     logger.info("Appended %d samples to %s (group=%s)", len(chunks), gp.samples_path, group)
@@ -138,7 +160,7 @@ def build_jsonl_from_db(conn: sqlite3.Connection, group: str) -> None:
     """Overwrite the group's JSONL with all chunks from the DB. Holds _jsonl_lock."""
     init_db(conn)
     rows = conn.execute(
-        "SELECT source_path, source_type, chunk_index, text, embedding FROM chunks ORDER BY source_path, chunk_index"
+        "SELECT source_path, source_type, chunk_index, text, embedding, artifact_type, artifact_path, page FROM chunks ORDER BY source_path, chunk_index"
     ).fetchall()
     gp = config.get_group_paths(group)
     gp.group_dir.mkdir(parents=True, exist_ok=True)
@@ -151,6 +173,9 @@ def build_jsonl_from_db(conn: sqlite3.Connection, group: str) -> None:
                     "source": r["source_path"],
                     "source_type": r["source_type"],
                     "chunk_index": r["chunk_index"],
+                    "artifact_type": r["artifact_type"] or "text",
+                    "artifact_path": r["artifact_path"],
+                    "page": r["page"],
                 }
                 f.write(json.dumps(rec, ensure_ascii=False) + "\n")
     logger.info("Built %s from DB (%d chunks, group=%s)", gp.samples_path, len(rows), group)

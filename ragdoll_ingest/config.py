@@ -49,6 +49,9 @@ SYNC_INTERVAL = int(get_env("RAGDOLL_SYNC_INTERVAL") or "300")
 # Sources: original documents are moved here (inside each group dir) after successful ingest
 SOURCES_SUBDIR = "sources"
 
+# Artifacts: stored chart images, table JSON; under {group}/artifacts/charts|tables/
+ARTIFACTS_SUBDIR = "artifacts"
+
 
 class GroupPaths:
     def __init__(
@@ -67,6 +70,7 @@ class GroupPaths:
         self.processed_path = processed_path
         self.action_log_path = action_log_path
         self.sources_dir = sources_dir
+        self.artifacts_dir = group_dir / ARTIFACTS_SUBDIR
 
 
 def _sanitize_group(g: str) -> str:
@@ -96,6 +100,8 @@ FAILED_SUBDIR = "failed"
 OLLAMA_HOST = get_env("RAGDOLL_OLLAMA_HOST") or get_env("OLLAMA_HOST") or "http://localhost:11434"
 EMBED_MODEL = get_env("RAGDOLL_EMBED_MODEL") or "nomic-embed-text:latest"
 CHUNK_MODEL = get_env("RAGDOLL_CHUNK_MODEL") or "llama3.2:3b"
+# LLM for chart/table/flowchart interpretation (qualitative summaries; no numeric guessing)
+INTERPRET_MODEL = get_env("RAGDOLL_INTERPRET_MODEL") or CHUNK_MODEL
 
 # Chunking
 TARGET_CHUNK_TOKENS = int(get_env("RAGDOLL_TARGET_CHUNK_TOKENS") or "400")

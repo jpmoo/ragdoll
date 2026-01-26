@@ -12,9 +12,12 @@ from watchdog.observers import Observer
 
 from . import config
 from .action_log import log as action_log
+from .artifacts import store_chart_image, store_flowchart, store_table
 from .chunker import chunk_text
 from .embedder import embed
-from .extractors import extract_text
+from .extractors import extract_document, extract_text, ocr_image_bytes
+from .interpreters import interpret_chart, interpret_flowchart, interpret_table
+from .router import route_image
 from .storage import (
     _connect,
     add_chunks,
@@ -104,67 +107,97 @@ def _process_one(fpath: Path) -> None:
 
     root = Path(config.INGEST_PATH)
     action_log("process_start", file=str(p), group=group)
+
+    chunks_list: list[dict] = []
     try:
-        text = extract_text(p)
+        doc = extract_document(p)
+        if doc and doc.has_embeddable():
+            # Structured: prose -> chunk; charts -> OCR + interpret + store; tables -> interpret + store. Embed summaries only.
+            for blk in doc.text_blocks:
+                for c in chunk_text(blk.text, group=group):
+                    chunks_list.append({"text": c, "artifact_type": "text", "artifact_path": None, "page": blk.page})
+            for idx, cr in enumerate(doc.chart_regions):
+                ocr = ocr_image_bytes(cr.image_bytes)
+                summary = interpret_chart(ocr, group=group)
+                ap = store_chart_image(group, p.stem, cr.page, idx, cr.image_bytes, cr.image_ext)
+                chunks_list.append({"text": summary, "artifact_type": "chart_summary", "artifact_path": ap, "page": cr.page})
+            for idx, tr in enumerate(doc.table_regions):
+                summary = interpret_table(tr.data, group=group)
+                ap = store_table(group, p.stem, tr.page, idx, tr.data)
+                chunks_list.append({"text": summary, "artifact_type": "table_summary", "artifact_path": ap, "page": tr.page})
+            for idx, fr in enumerate(doc.flowchart_regions):
+                ocr = ocr_image_bytes(fr.image_bytes)
+                summary, process = interpret_flowchart(ocr, group=group)
+                ap = store_flowchart(group, p.stem, fr.page, idx, fr.image_bytes, process, ocr)
+                chunks_list.append({"text": summary, "artifact_type": "flowchart_summary", "artifact_path": ap, "page": fr.page})
+            for idx, ir in enumerate(doc.image_regions):
+                chunks_list.extend(route_image(ir.image_bytes, ir.ext, ir.page_or_idx, group, p.stem, idx))
+            action_log("extract_ok", file=str(p), text_blocks=len(doc.text_blocks), charts=len(doc.chart_regions), tables=len(doc.table_regions), flowcharts=len(doc.flowchart_regions), images=len(doc.image_regions), group=group)
+        else:
+            # Fallback: .txt, .md, or extract_document returned nothing. Standalone images: classify and route.
+            if p.suffix.lower() in config.IMAGE_EXT:
+                b = p.read_bytes()
+                ext = (p.suffix or ".png").lstrip(".").lower() or "png"
+                chunks_list = route_image(b, ext, None, group, p.stem, 0)
+                action_log("extract_ok", file=str(p), kind="image_routed", group=group)
+            else:
+                text = extract_text(p)
+                if not (text and text.strip()):
+                    action_log("extract_empty", file=str(p), group=group)
+                    logger.warning("No text extracted from %s, moving to failed", p)
+                    _move_to(p, root, config.FAILED_SUBDIR, group)
+                    return
+                action_log("extract_ok", file=str(p), chars=len(text), group=group)
+                chunks = chunk_text(text, group=group)
+                if not chunks:
+                    action_log("chunk_empty", file=str(p), group=group)
+                    _move_to(p, root, config.FAILED_SUBDIR, group)
+                    return
+                chunks_list = [{"text": c, "artifact_type": "text", "artifact_path": None, "page": None} for c in chunks]
     except Exception as e:
         action_log("extract_fail", file=str(p), error=str(e), group=group)
         logger.exception("Extract failed for %s: %s", p, e)
         _move_to(p, root, config.FAILED_SUBDIR, group)
         return
 
-    if not (text and text.strip()):
-        action_log("extract_empty", file=str(p), group=group)
-        logger.warning("No text extracted from %s, moving to failed", p)
-        _move_to(p, root, config.FAILED_SUBDIR, group)
-        return
-
-    action_log("extract_ok", file=str(p), chars=len(text), group=group)
-    try:
-        chunks = chunk_text(text, group=group)
-    except Exception as e:
-        action_log("chunk_fail", file=str(p), error=str(e), group=group)
-        logger.exception("Chunking failed for %s: %s", p, e)
-        _move_to(p, root, config.FAILED_SUBDIR, group)
-        return
-
-    if not chunks:
+    if not chunks_list:
         action_log("chunk_empty", file=str(p), group=group)
-        logger.warning("No chunks from %s, moving to failed", p)
         _move_to(p, root, config.FAILED_SUBDIR, group)
         return
 
-    action_log("chunk_ok", file=str(p), num_chunks=len(chunks), group=group)
+    action_log("chunk_ok", file=str(p), num_chunks=len(chunks_list), group=group)
     try:
-        embs = embed(chunks, group=group)
+        embs = embed([c["text"] for c in chunks_list], group=group)
     except Exception as e:
         action_log("embed_fail", file=str(p), error=str(e), group=group)
         logger.exception("Embed failed for %s: %s", p, e)
         _move_to(p, root, config.FAILED_SUBDIR, group)
         return
 
-    if len(embs) != len(chunks):
+    if len(embs) != len(chunks_list):
         action_log("embed_mismatch", file=str(p), group=group)
-        logger.error("Embed count mismatch for %s", p)
         _move_to(p, root, config.FAILED_SUBDIR, group)
         return
 
-    # Dest: {DATA_DIR}/{group}/sources/{rel_within_group}
+    for i, e in enumerate(embs):
+        chunks_list[i]["embedding"] = e
+
     rel_within = _rel_within_group(p)
     dest = config.get_group_paths(group).sources_dir / rel_within
 
     conn = _connect(group)
     try:
-        add_chunks(conn, str(dest), p.suffix.lower(), list(zip(chunks, embs)))
+        add_chunks(conn, str(dest), p.suffix.lower(), chunks_list)
         conn.commit()
     finally:
         conn.close()
-    append_samples_jsonl(list(zip(chunks, embs)), str(dest), p.suffix.lower(), group)
+    append_samples_jsonl(chunks_list, str(dest), p.suffix.lower(), group)
     mark_processed(str(p), stat.st_mtime, stat.st_size, group)
-    action_log("store", source=str(dest), num_chunks=len(chunks), group=group)
+    action_log("store", source=str(dest), num_chunks=len(chunks_list), group=group)
 
     _move_to_sources(p, dest, group)
-    action_log("process_done", file=str(p), dest=str(dest), num_chunks=len(chunks), group=group)
-    logger.info("Processed %s -> %d chunks -> %s (group=%s)", p, len(chunks), dest, group)
+    action_log("process_done", file=str(p), dest=str(dest), num_chunks=len(chunks_list), group=group)
+    logger.info("Processed %s -> %d chunks -> %s (group=%s)", p, len(chunks_list), dest, group)
 
 
 def _worker(q: queue.Queue, stop: threading.Event) -> None:
