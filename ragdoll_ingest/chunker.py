@@ -40,7 +40,7 @@ def _split_blocks(text: str) -> list[str]:
     return out
 
 
-def _llm_split_long(text: str, ollama_url: str) -> list[str]:
+def _llm_split_long(text: str, ollama_url: str, group: str = "_root") -> list[str]:
     """Use LLM to split a long block into 2-3 semantic chunks. Falls back to mid-split on error."""
     # Truncate if still too long for context (leave room for prompt + response)
     max_in = (config.MAX_CHUNK_TOKENS * 3) * CHARS_PER_TOKEN  # ~3x max chunk
@@ -80,7 +80,7 @@ def _llm_split_long(text: str, ollama_url: str) -> list[str]:
         chunks = obj.get("chunks")
         if isinstance(chunks, list) and all(isinstance(c, str) for c in chunks) and chunks:
             out = [c.strip() for c in chunks if c.strip()]
-            action_log("chunk_llm", model=config.CHUNK_MODEL, input_len=len(text), num_chunks=len(out), fallback=False)
+            action_log("chunk_llm", model=config.CHUNK_MODEL, input_len=len(text), num_chunks=len(out), fallback=False, group=group)
             return out
     except Exception as e:
         logger.warning("LLM split failed, using mid-split: %s", e)
@@ -91,14 +91,14 @@ def _llm_split_long(text: str, ollama_url: str) -> list[str]:
         i = text.find(sep, mid - 200, mid + 200)
         if i != -1:
             out = [text[: i + len(sep)].strip(), text[i + len(sep) :].strip()]
-            action_log("chunk_llm", model=config.CHUNK_MODEL, input_len=len(text), num_chunks=len(out), fallback=True)
+            action_log("chunk_llm", model=config.CHUNK_MODEL, input_len=len(text), num_chunks=len(out), fallback=True, group=group)
             return out
     out = [text[:mid].strip(), text[mid:].strip()]
-    action_log("chunk_llm", model=config.CHUNK_MODEL, input_len=len(text), num_chunks=len(out), fallback=True)
+    action_log("chunk_llm", model=config.CHUNK_MODEL, input_len=len(text), num_chunks=len(out), fallback=True, group=group)
     return out
 
 
-def chunk_text(text: str, ollama_url: str | None = None) -> list[str]:
+def chunk_text(text: str, ollama_url: str | None = None, group: str = "_root") -> list[str]:
     """
     Split text into semantic chunks. Uses paragraph boundaries and, for very long
     paragraphs, llama3.2 to find semantic split points.
@@ -121,13 +121,13 @@ def chunk_text(text: str, ollama_url: str | None = None) -> list[str]:
                 chunks.append("\n\n".join(current))
                 current = []
                 current_tokens = 0
-            sub = _llm_split_long(block, url)
+            sub = _llm_split_long(block, url, group)
             for s in sub:
                 if _tokens_approx(s) <= config.MAX_CHUNK_TOKENS:
                     chunks.append(s)
                 else:
                     # recurse would be safe but could be slow; mid-split again
-                    chunks.extend(_llm_split_long(s, url))
+                    chunks.extend(_llm_split_long(s, url, group))
             continue
 
         if current_tokens + block_tokens > config.TARGET_CHUNK_TOKENS and current:

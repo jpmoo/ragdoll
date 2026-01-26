@@ -1,0 +1,13 @@
+---
+description: When pushing to remote, request network permission so git push can reach the server
+alwaysApply: true
+---
+
+# Updating the Remote Repo (git push)
+
+When the user asks to **push to the remote**, **update the remote repo**, or **sync to GitHub**:
+
+1. Run `git add`, `git commit`, and `git push` as appropriate.
+2. For **`git push`** (and any `git push origin …`), request **network** permission so the push can reach the remote. Use `required_permissions: ["network"]` (or `["network","all"]` if SSH/credentials need full access) when running the push command.
+
+The user has confirmed Git auth (HTTPS credential helper or SSH) works from a normal terminal; the main requirement is that the agent run `git push` with network allowed.

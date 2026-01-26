@@ -39,16 +39,54 @@ def get_env_path(key: str, default: Path | None = None) -> Path | None:
 INGEST_PATH = get_env_path("RAGDOLL_INGEST_PATH")
 
 # Optional: output folder for RAG JSONL and sources (user-specified)
-# RAGDOLL_OUTPUT_PATH or RAGDOLL_DATA_DIR; sources/ will be created inside it
+# RAGDOLL_OUTPUT_PATH or RAGDOLL_DATA_DIR; each group gets {DATA_DIR}/{group}/ with its own
+# ragdoll.db, rag_samples.jsonl, processed.jsonl, action.log, sources/
 DATA_DIR = get_env_path("RAGDOLL_OUTPUT_PATH") or get_env_path("RAGDOLL_DATA_DIR") or (Path(__file__).resolve().parents[1] / "data")
-SAMPLES_PATH = get_env_path("RAGDOLL_SAMPLES") or (DATA_DIR / "rag_samples.jsonl")
-PROCESSED_PATH = get_env_path("RAGDOLL_PROCESSED") or (DATA_DIR / "processed.jsonl")
 
-# Sources: original documents are moved here (inside DATA_DIR) after successful ingest
+# Sync: reconcile DB and JSONL, dedup DB; run every N seconds (0 = disabled)
+SYNC_INTERVAL = int(get_env("RAGDOLL_SYNC_INTERVAL") or "300")
+
+# Sources: original documents are moved here (inside each group dir) after successful ingest
 SOURCES_SUBDIR = "sources"
 
-# Action log: AI calls, file moves, extract/chunk/store (no embeddings or long text)
-ACTION_LOG_PATH = get_env_path("RAGDOLL_ACTION_LOG") or (DATA_DIR / "action.log")
+
+class GroupPaths:
+    def __init__(
+        self,
+        *,
+        group_dir: Path,
+        rag_db_path: Path,
+        samples_path: Path,
+        processed_path: Path,
+        action_log_path: Path,
+        sources_dir: Path,
+    ):
+        self.group_dir = group_dir
+        self.rag_db_path = rag_db_path
+        self.samples_path = samples_path
+        self.processed_path = processed_path
+        self.action_log_path = action_log_path
+        self.sources_dir = sources_dir
+
+
+def _sanitize_group(g: str) -> str:
+    if not g or g in (".", ".."):
+        return "_root"
+    return "".join(c if (c.isalnum() or c in "_.-") else "_" for c in g) or "_root"
+
+
+def get_group_paths(group: str) -> GroupPaths:
+    """Paths for one output group. group='_root' for top-level ingest files; else first subfolder name."""
+    s = _sanitize_group(group)
+    d = DATA_DIR / s
+    return GroupPaths(
+        group_dir=d,
+        rag_db_path=d / "ragdoll.db",
+        samples_path=d / "rag_samples.jsonl",
+        processed_path=d / "processed.jsonl",
+        action_log_path=d / "action.log",
+        sources_dir=d / SOURCES_SUBDIR,
+    )
 
 # Subfolders inside ingest: we don't watch these; failed files go to failed/
 PROCESSED_SUBDIR = "processed"

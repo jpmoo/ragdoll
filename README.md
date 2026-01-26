@@ -1,6 +1,6 @@
 # RAGDoll Ingest Service
 
-A Linux background service that watches an ingest folder, extracts text from incoming files (txt, md, Word, Excel, PDF, images with OCR), splits into **semantic chunks** using Ollama `llama3.2:3b`, embeds them with `nomic-embed-text:latest`, and appends to a **master RAG samples** JSONL (for use in other tools).
+A Linux background service that watches an ingest folder, extracts text from incoming files (txt, md, Word, Excel, PDF, images with OCR), splits into **semantic chunks** using Ollama `llama3.2:3b`, embeds them with `nomic-embed-text:latest`, and appends to per-group **RAG samples** JSONL (for use in other tools). Subfolders in the ingest folder become separate output groups, each with its own samples, DB, and sources.
 
 ## Requirements
 
@@ -45,17 +45,15 @@ Optional env vars:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `RAGDOLL_OUTPUT_PATH` | — | Output folder for RAG JSONL and `sources/` (takes precedence over `RAGDOLL_DATA_DIR`) |
-| `RAGDOLL_DATA_DIR` | `./data` | Output folder for JSONL and `sources/` if `RAGDOLL_OUTPUT_PATH` is unset |
-| `RAGDOLL_SAMPLES` | `{DATA_DIR}/rag_samples.jsonl` | RAG samples (one JSON object per line) |
-| `RAGDOLL_PROCESSED` | `{DATA_DIR}/processed.jsonl` | Dedup ledger: one `{path,mtime,size}` per ingested file |
+| `RAGDOLL_OUTPUT_PATH` | — | Output folder (takes precedence over `RAGDOLL_DATA_DIR`) |
+| `RAGDOLL_DATA_DIR` | `./data` | Output folder for per-group subdirs if `RAGDOLL_OUTPUT_PATH` is unset |
+| `RAGDOLL_SYNC_INTERVAL` | `300` | Seconds between DB↔JSONL sync (dedup, rebuild if needed). `0`=disabled |
 | `RAGDOLL_OLLAMA_HOST` | `http://localhost:11434` | Ollama API base URL |
 | `RAGDOLL_EMBED_MODEL` | `nomic-embed-text:latest` | Embedding model |
 | `RAGDOLL_CHUNK_MODEL` | `llama3.2:3b` | Model for semantic splitting of long paragraphs |
 | `RAGDOLL_TARGET_CHUNK_TOKENS` | `400` | Target size per chunk |
 | `RAGDOLL_MAX_CHUNK_TOKENS` | `600` | Max before LLM-assisted split |
 | `RAGDOLL_CHUNK_LLM_TIMEOUT` | `300` | Seconds to wait for Ollama when splitting long paragraphs (fallback: mid-split) |
-| `RAGDOLL_ACTION_LOG` | `{DATA_DIR}/action.log` | JSONL log of AI calls, file moves, extract/chunk/store (no embeddings) |
 
 ## Run manually
 
@@ -67,7 +65,7 @@ python -m ragdoll_ingest
 
 - On start, existing supported files in the ingest folder are processed.
 - New or moved-in files are picked up automatically.
-- Processed files are **moved** to `{OUTPUT}/sources/` (inside the RAG output folder); failures go to `ingest/failed/`.
+- Processed files are **moved** to the appropriate group’s `sources/` (see **Subfolders = separate groups** below); failures go to `ingest/failed/`.
 
 ## Run as a systemd service
 
@@ -113,21 +111,43 @@ python -m ragdoll_ingest
 - **PDF**: `.pdf`
 - **Images (OCR)**: `.png`, `.jpg`, `.jpeg`, `.tiff`, `.tif`, `.bmp`, `.gif`
 
+## Subfolders = separate groups
+
+Only **one level of grouping** is used: each **direct subfolder** of the ingest folder is a **separate group** with its own RAG outputs. Any deeper nesting under those subfolders is **flattened** into the group’s `sources/` (no nested dirs there):
+
+- Files **directly in** the ingest folder → group `_root` → `{DATA_DIR}/_root/`
+- Files in `ingest/reports/` → group `reports` → `{DATA_DIR}/reports/`; e.g. `ingest/reports/a.pdf` → `reports/sources/a.pdf`
+- Files in `ingest/legal/2024/doc.pdf` → group `legal`; the path under `legal/` is flattened to a single filename → `legal/sources/2024_doc.pdf`
+
+Each group gets its own:
+
+- **ragdoll.db** — SQLite chunks for that group
+- **rag_samples.jsonl** — RAG samples for that group
+- **processed.jsonl** — Dedup ledger for that group
+- **action.log** — AI calls, moves, extract/chunk/store for that group
+- **sources/** — Ingested files moved here. Only one level of grouping: deeper paths (e.g. `legal/2024/q1/doc.pdf`) are flattened to one name (e.g. `2024_q1_doc.pdf`) so `sources/` has no subfolders.
+
+If the output folder previously had a flat layout (`ragdoll.db`, `rag_samples.jsonl`, etc. at the top level), it is **migrated once** on startup into `_root/`.
+
 ## Output
 
-All outputs live in the **output folder** (`RAGDOLL_OUTPUT_PATH` or `RAGDOLL_DATA_DIR`). Use the JSONL in your own RAG/vector tools.
+All outputs live under the **output folder** (`RAGDOLL_OUTPUT_PATH` or `RAGDOLL_DATA_DIR`) in **per-group subdirs** (see above). Use each group’s JSONL or DB in your own RAG/vector tools.
 
-- **RAG samples** (`rag_samples.jsonl`): one JSON object per chunk, e.g.:
+- **SQLite** (`{group}/ragdoll.db`) — Chunks table (source_path, source_type, chunk_index, text, embedding). Written on every ingest; kept in sync with JSONL by a background sync pass.
+
+- **RAG samples** (`{group}/rag_samples.jsonl`): one JSON object per chunk, e.g.:
 
   ```json
-  {"text": "...", "embedding": [...], "source": "/output/path/sources/file.pdf", "source_type": ".pdf", "chunk_index": 0}
+  {"text": "...", "embedding": [...], "source": "/output/reports/sources/file.pdf", "source_type": ".pdf", "chunk_index": 0}
   ```
 
-- **sources/** — Original documents are moved here from the ingest folder after successful processing. The `source` field in the JSONL points to these paths.
+  If the file is missing, it is recreated from the DB. A sync pass runs at startup and every `RAGDOLL_SYNC_INTERVAL` seconds **per group**: it deduplicates the DB (keeps one row per `source_path`+`chunk_index`), compares DB and JSONL counts, and rebuilds the JSONL from the DB when they differ or after a dedup.
 
-- **Processed** (`processed.jsonl`) — Dedup ledger: one `{path, mtime, size}` per successfully ingested file.
+- **sources/** — Original documents are moved here from the ingest folder after successful processing. The `source` field in the JSONL/DB points to these paths. Only files are moved; ingest subfolders are left in place (even when empty).
 
-- **Action log** (`action.log`, or `RAGDOLL_ACTION_LOG`) — JSONL of AI calls (embed, chunk_llm), file moves (src/to/reason), and other actions. Embedding vectors and long text are not written.
+- **Processed** (`{group}/processed.jsonl`) — Dedup ledger: one `{path, mtime, size}` per successfully ingested file in that group.
+
+- **Action log** (`{group}/action.log`) — JSONL of AI calls (embed, chunk_llm), file moves (src/to/reason), sync_rebuild, sync_dedup, and other actions for that group. Embedding vectors and long text are not written.
 
 ## Updating the app (on your server)
 
