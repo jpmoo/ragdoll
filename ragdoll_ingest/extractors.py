@@ -109,7 +109,13 @@ def _extract_pdf_document(path: Path) -> Document:
                 for i, pg in enumerate(pb.pages):
                     for t in (pg.find_tables() or []):
                         rows = t.extract()
-                        if rows and any(any(c for c in r) for r in rows):
+                        if not rows:
+                            continue
+                        nonempty = sum(1 for r in rows for c in r if (c or "").strip())
+                        # Skip tables with ≤2 non-empty cells (layout/grid noise on diagrams)
+                        if nonempty <= 2:
+                            continue
+                        if any(any(c for c in r) for r in rows):
                             out.table_regions.append(TableRegion(page=i + 1, data=rows))
         except Exception as e:
             logger.debug("pdfplumber table extraction: %s", e)
@@ -119,16 +125,30 @@ def _extract_pdf_document(path: Path) -> Document:
             page_num = pagenum + 1
             raw = page.get_text()
             images = page.get_images(full=True)
-            # Many short blocks or vector drawings -> flowchart candidates
+            # Many short blocks or vector drawings -> flowchart (boxes, arrows, labels)
             blocks = (page.get_text("dict") or {}).get("blocks") or []
-            short = [b for b in blocks if sum(len(s.get("text", "")) for l in b.get("lines", []) for s in l.get("spans", [])) < 50]
+            short = [b for b in blocks if sum(len(s.get("text", "")) for l in b.get("lines", []) for s in l.get("spans", [])) < 80]
             try:
                 drawings = page.get_drawings() or []
             except Exception:
                 drawings = []
 
-            # Low text + has images -> chart regions
-            if len(raw.strip()) < 200 and images:
+            # Prefer flowchart when we see diagram signals. Check before chart so flowcharts
+            # with small embedded images still get process interpretation.
+            # - drawings + <1000 chars: strong diagram signal (arrows, boxes)
+            # - no drawings: <800 chars and >=1 short block (labels in small blocks)
+            is_flowchart = (drawings and len(raw.strip()) < 1000) or (
+                len(raw.strip()) < 800 and len(short) >= 1
+            )
+            if is_flowchart:
+                try:
+                    out.flowchart_regions.append(
+                        FlowchartRegion(page=page_num, image_bytes=_page_to_png_bytes(page))
+                    )
+                except Exception as e:
+                    logger.warning("Could not render flowchart page %s: %s", page_num, e)
+            # Low text + has images (and not flowchart above) -> chart regions
+            elif len(raw.strip()) < 200 and images:
                 for im in images:
                     xref = im[0]
                     try:
@@ -138,16 +158,12 @@ def _extract_pdf_document(path: Path) -> Document:
                         )
                     except Exception as e:
                         logger.warning("Could not extract image xref=%s on page %s: %s", xref, page_num, e)
-            # Low text + no images + (drawings or many short blocks) -> flowchart
-            elif len(raw.strip()) < 250 and not images and (drawings or len(short) >= 3):
-                try:
-                    out.flowchart_regions.append(
-                        FlowchartRegion(page=page_num, image_bytes=_page_to_png_bytes(page))
-                    )
-                except Exception as e:
-                    logger.warning("Could not render flowchart page %s: %s", page_num, e)
             elif raw.strip():
                 out.text_blocks.append(TextBlock(page=page_num, text=raw))
+
+        # Drop pdfplumber tables on flowchart pages; they are usually layout noise, not real tables.
+        flow_pages = {f.page for f in out.flowchart_regions}
+        out.table_regions = [t for t in out.table_regions if t.page not in flow_pages]
     finally:
         doc.close()
     return out
