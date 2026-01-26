@@ -47,7 +47,7 @@ def interpret_chart(ocr_text: str, group: str = "_root") -> str:
     prompt = (
         "You are summarizing a chart or graph for a RAG system. Use ONLY the OCR text from the chart (titles, axis labels, legends, annotations).\n"
         "Output a short qualitative summary: what is being compared, major trends, outliers, and any annotations. "
-        "Do NOT guess or invent specific numbers from bars or lines. "
+        "Do NOT guess or invent specific numbers from bars or lines. Do not include 'RAG' or 'RAG system' in your summary. "
         f"{AUTH}\n\n"
         "Return valid JSON: {\"summary\": \"your summary here\"}\n\n"
         "OCR text:\n"
@@ -72,6 +72,7 @@ def interpret_flowchart(ocr_text: str, group: str = "_root") -> tuple[str, dict]
     prompt = (
         "You are analyzing a flowchart or process diagram for a RAG system. Use ONLY the OCR text from the diagram.\n"
         "Infer: steps, decisions (with conditions), actors, and end states. If order or branching is unclear, state the uncertainty. "
+        "Do not include 'RAG' or 'RAG system' in your summary. "
         f"{AUTH}\n\n"
         'Return valid JSON: {"summary": "natural-language process summary", "steps": ["step1", ...], "decisions": [{"label": "...", "condition": "..."}], "actors": [], "end_states": []}\n\n'
         "OCR text:\n"
@@ -103,7 +104,7 @@ def interpret_table(table_data: list[list[str]], group: str = "_root") -> str:
     prompt = (
         "You are summarizing a table for a RAG system. Use only the provided cells.\n"
         "Output: purpose of the table, main metrics, key comparisons or rankings, and any trends or notes. "
-        "Do not invent or guess values that are not in the table. "
+        "Do not invent or guess values that are not in the table. Do not include 'RAG' or 'RAG system' in your summary. "
         f"{AUTH}\n\n"
         "Return valid JSON: {\"summary\": \"your summary here\"}\n\n"
         "Table (tab-separated):\n"
