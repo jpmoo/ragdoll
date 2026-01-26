@@ -41,15 +41,20 @@ def _expand_query(prompt: str, history: str | None) -> str:
     model = config.QUERY_MODEL
     url = (config.OLLAMA_HOST or "").rstrip("/")
     
-    combined = prompt
     if history:
-        combined = f"{history}\n\nUser: {prompt}"
-    
-    prompt_text = (
-        "Produce a single, standalone description of the user's current information need.\n\n"
-        f"Conversation context:\n{combined}\n\n"
-        "Standalone description:"
-    )
+        # Has conversation history - include it
+        prompt_text = (
+            "Produce a single, standalone description of the user's current information need.\n\n"
+            f"Conversation context:\n{history}\n\nUser: {prompt}\n\n"
+            "Standalone description:"
+        )
+    else:
+        # No history - just the current question
+        prompt_text = (
+            "Produce a single, standalone description of the user's information need based on this question.\n\n"
+            f"Question: {prompt}\n\n"
+            "Standalone description:"
+        )
     
     try:
         r = requests.post(
