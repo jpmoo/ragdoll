@@ -106,6 +106,20 @@ def _process_one(fpath: Path) -> None:
         return
 
     root = Path(config.INGEST_PATH)
+
+    # Empty or still-copying (e.g. network mount): wait and recheck to avoid "Cannot open empty file"
+    if stat.st_size == 0:
+        time.sleep(10)
+        try:
+            stat = p.stat()
+        except OSError:
+            stat = None
+        if not stat or stat.st_size == 0:
+            action_log("file_empty", file=str(p), group=group)
+            logger.warning("Skipping empty file (or still copying): %s", p)
+            _move_to(p, root, config.FAILED_SUBDIR, group)
+            return
+
     action_log("process_start", file=str(p), group=group)
 
     chunks_list: list[dict] = []
