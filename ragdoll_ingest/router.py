@@ -72,7 +72,7 @@ def route_image(
         ]
 
     if kind == "chart":
-        summary = interpret_chart(ocr, group=group)
+        summary = interpret_chart(ocr, group=group, filename=str(source_stem) if source_stem else None)
         ap = store_chart_image(group, source_stem, page_or_idx or 0, idx, image_bytes, ext or "png")
         filename_phrases = extract_key_phrases_from_filename(str(source_stem) if source_stem else "")
         ocr_phrases = extract_key_phrases_from_text(ocr or "")
@@ -86,7 +86,7 @@ def route_image(
         data = parse_ocr_to_table(ocr)
         if not data:
             data = [[ocr[:500] or "(no structure)"]]
-        summary = interpret_table(data, group=group)
+        summary = interpret_table(data, group=group, filename=str(source_stem) if source_stem else None)
         ap = store_table(group, source_stem, page_or_idx, idx, data)
         filename_phrases = extract_key_phrases_from_filename(str(source_stem) if source_stem else "")
         table_text = " ".join(" ".join(str(c) if c is not None else "" for c in row) for row in (data or []) if row)
@@ -98,7 +98,7 @@ def route_image(
         return [{"text": summary, "artifact_type": "table_summary", "artifact_path": ap, "page": page_or_idx}]
 
     # figure
-    summary, process = interpret_figure(ocr, group=group)
+    summary, process = interpret_figure(ocr, group=group, filename=str(source_stem) if source_stem else None)
     ap = store_figure(group, source_stem, page_or_idx or 0, idx, image_bytes, process, ocr)
     filename_phrases = extract_key_phrases_from_filename(str(source_stem) if source_stem else "")
     ocr_phrases = extract_key_phrases_from_text(ocr or "")

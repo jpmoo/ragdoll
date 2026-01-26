@@ -135,7 +135,7 @@ def _process_one(fpath: Path) -> None:
                     chunks_list.append({"text": c, "artifact_type": "text", "artifact_path": None, "page": blk.page})
             for idx, cr in enumerate(doc.chart_regions):
                 ocr = ocr_image_bytes(cr.image_bytes)
-                summary = interpret_chart(ocr, group=group)
+                summary = interpret_chart(ocr, group=group, filename=str(p.stem) if p.stem else None)
                 ap = store_chart_image(group, p.stem, cr.page, idx, cr.image_bytes, cr.image_ext)
                 filename_phrases = extract_key_phrases_from_filename(str(p.stem) if p.stem else "")
                 ocr_phrases = extract_key_phrases_from_text(ocr or "")
@@ -145,7 +145,7 @@ def _process_one(fpath: Path) -> None:
                     summary = f"{summary} Key terms: {', '.join(all_phrases)}."
                 chunks_list.append({"text": summary, "artifact_type": "chart_summary", "artifact_path": ap, "page": cr.page})
             for idx, tr in enumerate(doc.table_regions):
-                summary = interpret_table(tr.data, group=group)
+                summary = interpret_table(tr.data, group=group, filename=str(p.stem) if p.stem else None)
                 ap = store_table(group, p.stem, tr.page, idx, tr.data)
                 filename_phrases = extract_key_phrases_from_filename(str(p.stem) if p.stem else "")
                 # Extract text from table data for key phrases (handle None values)
@@ -158,7 +158,7 @@ def _process_one(fpath: Path) -> None:
                 chunks_list.append({"text": summary, "artifact_type": "table_summary", "artifact_path": ap, "page": tr.page})
             for idx, fr in enumerate(doc.figure_regions):
                 ocr = ocr_image_bytes(fr.image_bytes)
-                summary, process = interpret_figure(ocr, group=group)
+                summary, process = interpret_figure(ocr, group=group, filename=str(p.stem) if p.stem else None)
                 ap = store_figure(group, p.stem, fr.page, idx, fr.image_bytes, process, ocr)
                 filename_phrases = extract_key_phrases_from_filename(str(p.stem) if p.stem else "")
                 ocr_phrases = extract_key_phrases_from_text(ocr or "")

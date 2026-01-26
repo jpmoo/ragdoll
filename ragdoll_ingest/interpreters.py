@@ -11,7 +11,8 @@ from .action_log import log as action_log
 logger = logging.getLogger(__name__)
 
 AUTH = (
-    "Do not invent values, steps, or relationships. If something is unclear, say so."
+    "Do not invent values, steps, or relationships. If something is unclear, say so. "
+    "Be neutral and descriptive rather than evaluative. Focus on what is present, not what is missing or problematic."
 )
 
 
@@ -38,15 +39,18 @@ def _ollama_json(prompt: str, model: str, group: str = "_root", timeout: int | N
         return None
 
 
-def interpret_chart(ocr_text: str, group: str = "_root") -> str:
+def interpret_chart(ocr_text: str, group: str = "_root", filename: str | None = None) -> str:
     """
     Qualitative chart summary from OCR of titles, labels, legends. No numeric guessing.
     Store: image + OCR; Embed: this summary only.
     """
     model = config.INTERPRET_MODEL
+    filename_context = f"Source filename: {filename}\n\n" if filename else ""
     prompt = (
         "You are summarizing a chart or graph for a RAG system. Use ONLY the OCR text from the chart (titles, axis labels, legends, annotations).\n"
+        f"{filename_context}"
         "Output a short qualitative summary: what is being compared, major trends, outliers, and any annotations. "
+        "Include relevant context from the filename if it provides useful information. "
         "Do NOT guess or invent specific numbers from bars or lines. Do not include 'RAG' or 'RAG system' in your summary. "
         f"{AUTH}\n\n"
         "Return valid JSON: {\"summary\": \"your summary here\"}\n\n"
@@ -62,16 +66,19 @@ def interpret_chart(ocr_text: str, group: str = "_root") -> str:
     return fallback
 
 
-def interpret_figure(ocr_text: str, group: str = "_root") -> tuple[str, dict]:
+def interpret_figure(ocr_text: str, group: str = "_root", filename: str | None = None) -> tuple[str, dict]:
     """
     Infer process: steps, decisions, conditions, actors, end states. State uncertainty if unclear.
     Returns (summary: str for embedding, process_dict for storage).
     Store: process JSON + OCR + image ref; Embed: summary only.
     """
     model = config.INTERPRET_MODEL
+    filename_context = f"Source filename: {filename}\n\n" if filename else ""
     prompt = (
         "You are analyzing a figure or process diagram for a RAG system. Use ONLY the OCR text from the diagram.\n"
+        f"{filename_context}"
         "Infer: steps, decisions (with conditions), actors, and end states. If order or branching is unclear, state the uncertainty. "
+        "Include relevant context from the filename if it provides useful information. "
         "Do not include 'RAG' or 'RAG system' in your summary. "
         f"{AUTH}\n\n"
         'Return valid JSON: {"summary": "natural-language process summary", "steps": ["step1", ...], "decisions": [{"label": "...", "condition": "..."}], "actors": [], "end_states": []}\n\n'
@@ -89,7 +96,7 @@ def interpret_figure(ocr_text: str, group: str = "_root") -> tuple[str, dict]:
     return fallback, {"steps": [], "decisions": [], "actors": [], "end_states": []}
 
 
-def interpret_table(table_data: list[list[str]], group: str = "_root") -> str:
+def interpret_table(table_data: list[list[str]], group: str = "_root", filename: str | None = None) -> str:
     """
     Summarize table purpose, metrics, key comparisons, rankings, trends. No inventing.
     Store: full table (JSON/CSV); Embed: this summary only.
@@ -101,9 +108,12 @@ def interpret_table(table_data: list[list[str]], group: str = "_root") -> str:
     if len(table_data) > 20:
         tbl += f"\n... ({len(table_data) - 20} more rows)"
 
+    filename_context = f"Source filename: {filename}\n\n" if filename else ""
     prompt = (
         "You are summarizing a table for a RAG system. Use only the provided cells.\n"
+        f"{filename_context}"
         "Output: purpose of the table, main metrics, key comparisons or rankings, and any trends or notes. "
+        "Include relevant context from the filename if it provides useful information. "
         "Do not invent or guess values that are not in the table. Do not include 'RAG' or 'RAG system' in your summary. "
         f"{AUTH}\n\n"
         "Return valid JSON: {\"summary\": \"your summary here\"}\n\n"
