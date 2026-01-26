@@ -59,7 +59,63 @@ print(f"Available collections: {collections}")
 
 ---
 
-## 2. Querying Collections
+## 2. Fetching Source Documents
+
+RAGDoll provides a `/fetch` endpoint to retrieve the original source documents referenced in query results.
+
+### Endpoint: `GET /fetch/{group}/{filename}`
+
+Fetches a source document from a specific collection.
+
+**URL Format:**
+```
+http://localhost:9042/fetch/{group}/{filename}
+```
+
+The `filename` should match the relative path within the group's `sources/` directory. For nested paths, use forward slashes (they will be URL-encoded automatically).
+
+**Examples:**
+```bash
+# Simple filename
+curl http://localhost:9042/fetch/edleadership/Visualizing%20Double-loop%20Learning.pdf
+
+# Nested path (if file was in a subdirectory)
+curl http://localhost:9042/fetch/reports/2024/Annual%20Report.pdf
+```
+
+**Response:**
+- Returns the file with appropriate `Content-Type` headers
+- PDFs, images, and documents are served inline (browsers can display them)
+- Returns `404` if file not found
+- Returns `403` if path traversal attempt detected (security)
+
+**Python example:**
+```python
+import requests
+
+# Get source_url from query result
+result = query_ragdoll("double-loop learning")[0]
+source_url = result["source_url"]  # e.g., "/fetch/edleadership/document.pdf"
+
+# Fetch the document
+base_url = "http://localhost:9042"
+response = requests.get(f"{base_url}{source_url}")
+
+if response.status_code == 200:
+    # Save or display the file
+    with open("document.pdf", "wb") as f:
+        f.write(response.content)
+    print(f"Downloaded: {result['source_name']}")
+```
+
+**Security:**
+- Only files within the group's `sources/` directory are accessible
+- Path traversal attacks (e.g., `../../../etc/passwd`) are blocked
+- Group names are sanitized to prevent directory traversal
+
+---
+
+## 3. Querying Collections
 
 RAGDoll supports two query methods: **GET** (simple URL) and **POST** (JSON body). Both support querying all collections or a specific one.
 
@@ -138,7 +194,7 @@ results = response.json()
 
 ---
 
-## 3. Understanding Query Results
+## 4. Understanding Query Results
 
 ### Response Structure
 
@@ -189,8 +245,9 @@ results = response.json()
 Each result in the `results` array contains:
 
 - **`group`**: Collection name the chunk belongs to
-- **`source_path`**: Full path to the source document
+- **`source_path`**: Full path to the source document (filesystem path)
 - **`source_name`**: Filename of the source document
+- **`source_url`**: HTTP URL to fetch the source document (e.g., `/fetch/edleadership/document.pdf`)
 - **`source_type`**: File extension (e.g., `.pdf`, `.docx`)
 - **`chunk_index`**: Index of this chunk within the source document
 - **`text`**: The actual text content (cleaned, no newlines)
@@ -205,7 +262,7 @@ Each result in the `results` array contains:
 
 ---
 
-## 4. Integration Patterns for Chatbots
+## 5. Integration Patterns for Chatbots
 
 ### Pattern 1: Simple Question-Answer
 
@@ -318,7 +375,7 @@ def adaptive_search(prompt: str, collection: str = None, min_results: int = 3):
 
 ---
 
-## 5. Error Handling
+## 6. Error Handling
 
 ### HTTP Status Codes
 
@@ -416,7 +473,7 @@ else:
 
 ---
 
-## 6. Best Practices
+## 7. Best Practices
 
 ### 1. **Choose Appropriate Thresholds**
 
@@ -493,7 +550,7 @@ def cached_query(prompt: str, collection: str = None):
 
 ---
 
-## 7. Complete Chatbot Integration Example
+## 8. Complete Chatbot Integration Example
 
 ```python
 import requests
@@ -575,7 +632,7 @@ print(response_text)
 
 ---
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
 ### No Results Returned
 
@@ -599,13 +656,14 @@ print(response_text)
 
 ---
 
-## Quick Reference
+## 10. Quick Reference
 
 ### Endpoints
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
 | `/rags` | GET | List all collections |
+| `/fetch/{group}/{filename}` | GET | Fetch source document |
 | `/query` | GET | Query (URL parameters) |
 | `/query` | POST | Query (JSON body) |
 
@@ -625,6 +683,7 @@ print(response_text)
 | `text` | string | Chunk text content |
 | `similarity` | float | Relevance score (0.0-1.0) |
 | `source_name` | string | Source document filename |
+| `source_url` | string | URL to fetch source document (`/fetch/{group}/{filename}`) |
 | `group` | string | Collection name |
 | `page` | int/null | Page number (PDFs) |
 | `artifact_type` | string | Content type (text/chart_summary/table_summary/figure_summary) |

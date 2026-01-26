@@ -8,12 +8,12 @@ from typing import Any
 
 import requests
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 from . import config
 from .embedder import embed
-from .storage import _connect, _list_sync_groups, clean_text, init_db
+from .storage import _connect, _list_sync_groups, clean_text, init_db, get_group_paths, _sanitize_group
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +84,67 @@ def list_rags() -> dict[str, Any]:
     return {"collections": groups}
 
 
+@app.get("/fetch/{group}/{filename:path}")
+def fetch_source(group: str, filename: str) -> FileResponse:
+    """
+    Fetch a source document by group and filename.
+    
+    The filename should match the relative path within the group's sources/ directory.
+    For example, if source_path is "sources/report.pdf", use: /fetch/{group}/report.pdf
+    
+    Security: Only files within the group's sources directory are accessible.
+    """
+    # Sanitize group name
+    safe_group = _sanitize_group(group)
+    
+    # Get the group's sources directory
+    gp = get_group_paths(safe_group)
+    sources_dir = gp.sources_dir
+    
+    # Build the file path
+    file_path = sources_dir / filename
+    
+    # Security: Ensure the file is within the sources directory (prevent path traversal)
+    try:
+        file_path = file_path.resolve()
+        sources_dir = sources_dir.resolve()
+        if not str(file_path).startswith(str(sources_dir)):
+            raise HTTPException(status_code=403, detail="Access denied: path outside sources directory")
+    except (ValueError, OSError):
+        raise HTTPException(status_code=400, detail="Invalid path")
+    
+    # Check if file exists
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail=f"Source file not found: {filename}")
+    
+    # Determine content type based on extension
+    ext = file_path.suffix.lower()
+    media_types = {
+        ".pdf": "application/pdf",
+        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".doc": "application/msword",
+        ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ".xls": "application/vnd.ms-excel",
+        ".txt": "text/plain",
+        ".md": "text/markdown",
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".gif": "image/gif",
+        ".bmp": "image/bmp",
+        ".tiff": "image/tiff",
+        ".tif": "image/tiff",
+    }
+    media_type = media_types.get(ext, "application/octet-stream")
+    
+    return FileResponse(
+        path=str(file_path),
+        media_type=media_type,
+        filename=file_path.name,
+        headers={"Content-Disposition": f'inline; filename="{file_path.name}"'}
+    )
+
+
 def _do_query(prompt: str, history: str | None, threshold: float, group: str | None = None) -> dict[str, Any]:
     """Shared query logic for GET and POST endpoints.
     
@@ -131,11 +192,44 @@ def _do_query(prompt: str, history: str | None, threshold: float, group: str | N
                     similarity = _cosine_similarity(query_emb, chunk_emb)
                     
                     if similarity >= threshold:
+                        source_path = row["source_path"]
+                        source_name = Path(source_path).name
+                        # Build URL for fetching the source file
+                        # source_path stored in DB is the path within the group's sources_dir
+                        gp = get_group_paths(group_name)
+                        try:
+                            full_source_path = Path(source_path)
+                            # If source_path is absolute, get relative to sources_dir
+                            if full_source_path.is_absolute():
+                                try:
+                                    rel_path = full_source_path.relative_to(gp.sources_dir)
+                                except ValueError:
+                                    # Fallback: just use filename
+                                    rel_path = Path(source_name)
+                            else:
+                                # source_path is relative, might be just filename or include subdirs
+                                rel_path = Path(source_path)
+                                # Remove "sources/" prefix if present
+                                parts = rel_path.parts
+                                if len(parts) > 0 and parts[0] == "sources":
+                                    rel_path = Path(*parts[1:])
+                            
+                            # URL-encode the path segments and build fetch URL
+                            # Use forward slashes and URL-encode special characters
+                            path_str = str(rel_path).replace("\\", "/")
+                            from urllib.parse import quote
+                            encoded_path = "/".join(quote(part, safe="") for part in path_str.split("/"))
+                            fetch_url = f"/fetch/{group_name}/{encoded_path}"
+                        except Exception as e:
+                            logger.warning("Could not build fetch URL for %s: %s", source_path, e)
+                            fetch_url = None
+                        
                         all_results.append({
                             "group": group_name,
-                            "source_path": row["source_path"],
+                            "source_path": source_path,
                             "source_type": row["source_type"],
-                            "source_name": Path(row["source_path"]).name,
+                            "source_name": source_name,
+                            "source_url": fetch_url,  # URL to fetch the source file
                             "chunk_index": row["chunk_index"],
                             "text": clean_text(row["text"]),
                             "artifact_type": row["artifact_type"] or "text",
