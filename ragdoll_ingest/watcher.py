@@ -139,7 +139,7 @@ def _process_one(fpath: Path) -> None:
                 ap = store_chart_image(group, p.stem, cr.page, idx, cr.image_bytes, cr.image_ext)
                 filename_phrases = extract_key_phrases_from_filename(str(p.stem) if p.stem else "")
                 ocr_phrases = extract_key_phrases_from_text(ocr or "")
-                all_phrases = list(set(filename_phrases + ocr_phrases))[:10]  # Combine, dedupe, limit
+                all_phrases = [p for p in set(filename_phrases + ocr_phrases) if p and isinstance(p, str)][:10]  # Combine, dedupe, filter None, limit
                 # Append key phrases to summary text
                 if all_phrases:
                     summary = f"{summary} Key terms: {', '.join(all_phrases)}."
@@ -162,7 +162,7 @@ def _process_one(fpath: Path) -> None:
                 ap = store_figure(group, p.stem, fr.page, idx, fr.image_bytes, process, ocr)
                 filename_phrases = extract_key_phrases_from_filename(str(p.stem) if p.stem else "")
                 ocr_phrases = extract_key_phrases_from_text(ocr or "")
-                all_phrases = list(set(filename_phrases + ocr_phrases))[:10]  # Combine, dedupe, limit
+                all_phrases = [p for p in set(filename_phrases + ocr_phrases) if p and isinstance(p, str)][:10]  # Combine, dedupe, filter None, limit
                 # Append key phrases to summary text
                 if all_phrases:
                     summary = f"{summary} Key terms: {', '.join(all_phrases)}."
