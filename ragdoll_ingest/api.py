@@ -13,7 +13,8 @@ from pydantic import BaseModel
 
 from . import config
 from .embedder import embed
-from .storage import _connect, _list_sync_groups, clean_text, init_db, get_group_paths, _sanitize_group
+from .storage import _connect, _list_sync_groups, clean_text, init_db, _sanitize_group
+from .config import get_group_paths
 
 logger = logging.getLogger(__name__)
 
