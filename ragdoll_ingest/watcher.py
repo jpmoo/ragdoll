@@ -22,6 +22,8 @@ from .storage import (
     _connect,
     add_chunks,
     already_processed,
+    extract_key_terms_from_filename,
+    extract_key_terms_from_text,
     mark_processed,
     append_samples_jsonl,
     migrate_flat_to_root,
@@ -134,16 +136,27 @@ def _process_one(fpath: Path) -> None:
                 ocr = ocr_image_bytes(cr.image_bytes)
                 summary = interpret_chart(ocr, group=group)
                 ap = store_chart_image(group, p.stem, cr.page, idx, cr.image_bytes, cr.image_ext)
-                chunks_list.append({"text": summary, "artifact_type": "chart_summary", "artifact_path": ap, "page": cr.page})
+                filename_terms = extract_key_terms_from_filename(p.stem)
+                ocr_terms = extract_key_terms_from_text(ocr)
+                key_terms = list(set(filename_terms + ocr_terms))[:15]  # Combine, dedupe, limit
+                chunks_list.append({"text": summary, "artifact_type": "chart_summary", "artifact_path": ap, "page": cr.page, "key_terms": key_terms})
             for idx, tr in enumerate(doc.table_regions):
                 summary = interpret_table(tr.data, group=group)
                 ap = store_table(group, p.stem, tr.page, idx, tr.data)
-                chunks_list.append({"text": summary, "artifact_type": "table_summary", "artifact_path": ap, "page": tr.page})
+                filename_terms = extract_key_terms_from_filename(p.stem)
+                # Extract text from table data for key terms
+                table_text = " ".join(" ".join(row) for row in tr.data if row)
+                table_terms = extract_key_terms_from_text(table_text)
+                key_terms = list(set(filename_terms + table_terms))[:15]
+                chunks_list.append({"text": summary, "artifact_type": "table_summary", "artifact_path": ap, "page": tr.page, "key_terms": key_terms})
             for idx, fr in enumerate(doc.figure_regions):
                 ocr = ocr_image_bytes(fr.image_bytes)
                 summary, process = interpret_figure(ocr, group=group)
                 ap = store_figure(group, p.stem, fr.page, idx, fr.image_bytes, process, ocr)
-                chunks_list.append({"text": summary, "artifact_type": "figure_summary", "artifact_path": ap, "page": fr.page})
+                filename_terms = extract_key_terms_from_filename(p.stem)
+                ocr_terms = extract_key_terms_from_text(ocr)
+                key_terms = list(set(filename_terms + ocr_terms))[:15]  # Combine, dedupe, limit
+                chunks_list.append({"text": summary, "artifact_type": "figure_summary", "artifact_path": ap, "page": fr.page, "key_terms": key_terms})
             for idx, ir in enumerate(doc.image_regions):
                 chunks_list.extend(route_image(ir.image_bytes, ir.ext, ir.page_or_idx, group, p.stem, idx))
             action_log("extract_ok", file=str(p), text_blocks=len(doc.text_blocks), charts=len(doc.chart_regions), tables=len(doc.table_regions), figures=len(doc.figure_regions), images=len(doc.image_regions), group=group)

@@ -25,6 +25,47 @@ def clean_text(text: str) -> str:
     # Strip leading/trailing whitespace
     return text.strip()
 
+
+def extract_key_terms_from_filename(filename: str) -> list[str]:
+    """Extract key terms from filename by splitting on common delimiters."""
+    if not filename:
+        return []
+    # Remove extension
+    stem = Path(filename).stem
+    # Split on common delimiters: underscore, hyphen, space, period
+    parts = re.split(r"[_\-\s\.]+", stem)
+    # Filter out very short words, numbers, and common stop words
+    stop_words = {"the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with", "by", "from"}
+    terms = []
+    for part in parts:
+        part = part.strip().lower()
+        if len(part) >= 3 and part not in stop_words and not part.isdigit():
+            terms.append(part)
+    return terms
+
+
+def extract_key_terms_from_text(text: str, max_terms: int = 10) -> list[str]:
+    """Extract key terms from text (simple approach: significant words, excluding common stop words)."""
+    if not text:
+        return []
+    # Common stop words
+    stop_words = {
+        "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with", "by", "from",
+        "is", "are", "was", "were", "be", "been", "being", "have", "has", "had", "do", "does", "did",
+        "will", "would", "should", "could", "may", "might", "must", "can", "this", "that", "these", "those",
+        "it", "its", "they", "them", "their", "there", "then", "than", "what", "which", "who", "when", "where", "why", "how"
+    }
+    # Extract words (alphanumeric, at least 3 chars)
+    words = re.findall(r"\b[a-zA-Z]{3,}\b", text.lower())
+    # Count frequency
+    word_counts: dict[str, int] = {}
+    for word in words:
+        if word not in stop_words:
+            word_counts[word] = word_counts.get(word, 0) + 1
+    # Sort by frequency, return top terms
+    sorted_terms = sorted(word_counts.items(), key=lambda x: x[1], reverse=True)
+    return [term for term, _ in sorted_terms[:max_terms]]
+
 _processed_cache: dict[str, set[tuple[str, float, int]]] = {}
 _processed_lock = threading.Lock()
 _jsonl_lock = threading.Lock()
@@ -115,6 +156,7 @@ def init_db(conn: sqlite3.Connection) -> None:
         ("artifact_type", "TEXT DEFAULT 'text'"),
         ("artifact_path", "TEXT"),
         ("page", "INTEGER"),
+        ("key_terms", "TEXT"),  # JSON array of key terms
     ]:
         try:
             conn.execute(f"ALTER TABLE chunks ADD COLUMN {col} {defn}")
@@ -130,8 +172,8 @@ def add_chunks(
     chunks: list[dict],
 ) -> None:
     """
-    chunks: list of {text, embedding, artifact_type?, artifact_path?, page?}.
-    Defaults: artifact_type='text', artifact_path=None, page=None.
+    chunks: list of {text, embedding, artifact_type?, artifact_path?, page?, key_terms?}.
+    Defaults: artifact_type='text', artifact_path=None, page=None, key_terms=None.
     """
     init_db(conn)
     for i, c in enumerate(chunks):
@@ -140,9 +182,11 @@ def add_chunks(
         atype = c.get("artifact_type", "text")
         apath = c.get("artifact_path")
         page = c.get("page")
+        key_terms = c.get("key_terms")
+        key_terms_json = json.dumps(key_terms) if key_terms else None
         conn.execute(
-            "INSERT INTO chunks (source_path, source_type, chunk_index, text, embedding, artifact_type, artifact_path, page) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (source_path, source_type, i, text, json.dumps(emb), atype, apath, page),
+            "INSERT INTO chunks (source_path, source_type, chunk_index, text, embedding, artifact_type, artifact_path, page, key_terms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (source_path, source_type, i, text, json.dumps(emb), atype, apath, page, key_terms_json),
         )
 
 
@@ -164,6 +208,7 @@ def append_samples_jsonl(chunks: list[dict], source_path: str, source_type: str,
                     "artifact_type": c.get("artifact_type", "text"),
                     "artifact_path": c.get("artifact_path"),
                     "page": c.get("page"),
+                    "key_terms": c.get("key_terms"),
                 }
                 f.write(json.dumps(rec, ensure_ascii=False) + "\n")
     logger.info("Appended %d samples to %s (group=%s)", len(chunks), gp.samples_path, group)
@@ -173,13 +218,14 @@ def build_jsonl_from_db(conn: sqlite3.Connection, group: str) -> None:
     """Overwrite the group's JSONL with all chunks from the DB. Holds _jsonl_lock."""
     init_db(conn)
     rows = conn.execute(
-        "SELECT source_path, source_type, chunk_index, text, embedding, artifact_type, artifact_path, page FROM chunks ORDER BY source_path, chunk_index"
+        "SELECT source_path, source_type, chunk_index, text, embedding, artifact_type, artifact_path, page, key_terms FROM chunks ORDER BY source_path, chunk_index"
     ).fetchall()
     gp = config.get_group_paths(group)
     gp.group_dir.mkdir(parents=True, exist_ok=True)
     with _jsonl_lock:
         with open(gp.samples_path, "w", encoding="utf-8") as f:
             for r in rows:
+                key_terms = json.loads(r["key_terms"]) if r["key_terms"] else None
                 rec = {
                     "text": clean_text(r["text"]),
                     "embedding": json.loads(r["embedding"]),
@@ -189,6 +235,7 @@ def build_jsonl_from_db(conn: sqlite3.Connection, group: str) -> None:
                     "artifact_type": r["artifact_type"] or "text",
                     "artifact_path": r["artifact_path"],
                     "page": r["page"],
+                    "key_terms": key_terms,
                 }
                 f.write(json.dumps(rec, ensure_ascii=False) + "\n")
     logger.info("Built %s from DB (%d chunks, group=%s)", gp.samples_path, len(rows), group)

@@ -7,6 +7,7 @@ from .artifacts import store_chart_image, store_figure, store_table
 from .chunker import chunk_text
 from .extractors import ocr_image_bytes
 from .interpreters import interpret_chart, interpret_figure, interpret_table
+from .storage import extract_key_terms_from_filename, extract_key_terms_from_text
 
 
 def classify_image(ocr_text: str) -> str:
@@ -73,7 +74,10 @@ def route_image(
     if kind == "chart":
         summary = interpret_chart(ocr, group=group)
         ap = store_chart_image(group, source_stem, page_or_idx or 0, idx, image_bytes, ext or "png")
-        return [{"text": summary, "artifact_type": "chart_summary", "artifact_path": ap, "page": page_or_idx}]
+        filename_terms = extract_key_terms_from_filename(source_stem)
+        ocr_terms = extract_key_terms_from_text(ocr)
+        key_terms = list(set(filename_terms + ocr_terms))[:15]
+        return [{"text": summary, "artifact_type": "chart_summary", "artifact_path": ap, "page": page_or_idx, "key_terms": key_terms}]
 
     if kind == "table":
         data = parse_ocr_to_table(ocr)
@@ -81,9 +85,16 @@ def route_image(
             data = [[ocr[:500] or "(no structure)"]]
         summary = interpret_table(data, group=group)
         ap = store_table(group, source_stem, page_or_idx, idx, data)
-        return [{"text": summary, "artifact_type": "table_summary", "artifact_path": ap, "page": page_or_idx}]
+        filename_terms = extract_key_terms_from_filename(source_stem)
+        table_text = " ".join(" ".join(row) for row in data if row)
+        table_terms = extract_key_terms_from_text(table_text)
+        key_terms = list(set(filename_terms + table_terms))[:15]
+        return [{"text": summary, "artifact_type": "table_summary", "artifact_path": ap, "page": page_or_idx, "key_terms": key_terms}]
 
     # figure
     summary, process = interpret_figure(ocr, group=group)
     ap = store_figure(group, source_stem, page_or_idx or 0, idx, image_bytes, process, ocr)
-    return [{"text": summary, "artifact_type": "figure_summary", "artifact_path": ap, "page": page_or_idx}]
+    filename_terms = extract_key_terms_from_filename(source_stem)
+    ocr_terms = extract_key_terms_from_text(ocr)
+    key_terms = list(set(filename_terms + ocr_terms))[:15]
+    return [{"text": summary, "artifact_type": "figure_summary", "artifact_path": ap, "page": page_or_idx, "key_terms": key_terms}]
