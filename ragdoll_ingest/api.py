@@ -13,8 +13,8 @@ from pydantic import BaseModel
 
 from . import config
 from .embedder import embed
-from .storage import _connect, _list_sync_groups, clean_text, init_db, _sanitize_group
-from .config import get_group_paths
+from .storage import _connect, _list_sync_groups, clean_text, init_db
+from .config import get_group_paths, _sanitize_group
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +95,7 @@ def fetch_source(group: str, filename: str) -> FileResponse:
     
     Security: Only files within the group's sources directory are accessible.
     """
-    # Sanitize group name
+    # Sanitize group name (imported from config)
     safe_group = _sanitize_group(group)
     
     # Get the group's sources directory
