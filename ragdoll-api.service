@@ -17,7 +17,7 @@ EnvironmentFile=-/etc/default/ragdoll-ingest
 #   ExecStart=/opt/ragdoll/.venv/bin/python run_api.py
 
 WorkingDirectory=/opt/ragdoll
-ExecStart=/usr/bin/python3 run_api.py
+ExecStart=/opt/ragdoll/.venv/bin/python run_api.py
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal

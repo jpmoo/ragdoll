@@ -181,6 +181,8 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now ragdoll-api
 ```
 
+**Note:** The service file assumes the venv is at `/opt/ragdoll/.venv/bin/python`. If your setup differs, edit the service file or use `systemctl edit ragdoll-api` to override `ExecStart`.
+
 The API server listens on port `9042` by default (configurable via `RAGDOLL_API_PORT`).
 
 ### Endpoints
