@@ -117,15 +117,15 @@ python -m ragdoll_ingest
 Only **one level of grouping** is used: each **direct subfolder** of the ingest folder is a **separate group** with its own RAG outputs. Any deeper nesting under those subfolders is **flattened** into the group’s `sources/` (no nested dirs there):
 
 - Files **directly in** the ingest folder → group `_root` → `{DATA_DIR}/_root/`
-- Files in `ingest/reports/` → group `reports` → `{DATA_DIR}/reports/`; e.g. `ingest/reports/a.pdf` → `reports/sources/a.pdf`
-- Files in `ingest/legal/2024/doc.pdf` → group `legal`; the path under `legal/` is flattened to a single filename → `legal/sources/2024_doc.pdf`
+- Files in (example) `ingest/reports/` → group `reports` → `{DATA_DIR}/reports/`; e.g. `ingest/reports/a.pdf` → `reports/sources/a.pdf`
+- Files in (example) `ingest/legal/2024/doc.pdf` → group `legal`; the path under `legal/` is flattened to a single filename → `legal/sources/2024_doc.pdf`
 
 Each group gets its own:
 
-- **ragdoll.db** — SQLite chunks (incl. `artifact_type`, `artifact_path`, `page` for provenance).
-- **rag_samples.jsonl** — RAG samples; records include `artifact_type` (`text` | `chart_summary` | `table_summary` | `flowchart_summary`), `artifact_path`, `page`.
-- **processed.jsonl** — Dedup ledger for that group.
-- **action.log** — AI calls, moves, extract/chunk/interpret/store for that group.
+- **ragdoll.db** — SQLite `chunks`: `source_path`, `source_type`, `chunk_index`, `text`, `embedding`, `artifact_type`, `artifact_path`, `page`.
+- **rag_samples.jsonl** — One JSON per chunk: `text`, `embedding`, `source`, `source_type`, `chunk_index`, `artifact_type` (`text`|`chart_summary`|`table_summary`|`flowchart_summary`), `artifact_path`, `page`.
+- **processed.jsonl** — Dedup ledger: one `{path, mtime, size}` per successfully ingested file.
+- **action.log** — JSONL of AI calls, moves, extract/chunk/interpret/store, and sync actions (`sync_rebuild`, `sync_dedup`) for that group.
 - **sources/** — Ingested files moved here. Only one level of grouping: deeper paths are flattened to one filename in `sources/`.
 - **artifacts/** — Chart images (`charts/`), table JSON (`tables/`), flowchart image+process JSON (`flowcharts/`). Only interpretations are embedded; raw data is stored here.
 
