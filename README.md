@@ -197,14 +197,14 @@ curl -X POST http://localhost:9042/query \
   -d '{
     "prompt": "What is double-loop learning?",
     "history": "Previous conversation...",
-    "threshold": 0.60
+    "threshold": 0.45
   }'
 ```
 
 Request body:
 - `prompt` (required): User's query/question
 - `history` (optional): Conversation history for context
-- `threshold` (optional, default: 0.60): Minimum similarity score (0.0-1.0)
+- `threshold` (optional, default: 0.45): Minimum similarity score (0.0-1.0)
 
 Response includes:
 - `query`: Original prompt

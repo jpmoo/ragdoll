@@ -23,7 +23,7 @@ app = FastAPI(title="RAGDoll API", version="1.0.0")
 class QueryRequest(BaseModel):
     prompt: str
     history: str | None = None
-    threshold: float = 0.60
+    threshold: float = 0.45
 
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
@@ -145,7 +145,7 @@ def _do_query(prompt: str, history: str | None, threshold: float) -> dict[str, A
 
 
 @app.get("/query")
-def query_rag_get(prompt: str, history: str | None = None, threshold: float = 0.60) -> dict[str, Any]:
+def query_rag_get(prompt: str, history: str | None = None, threshold: float = 0.45) -> dict[str, Any]:
     """Query RAG collections via GET (simple URL format)."""
     return _do_query(prompt, history, threshold)
 
