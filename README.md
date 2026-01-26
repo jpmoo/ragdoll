@@ -217,12 +217,30 @@ Response includes:
 
 If the API server isn't accessible from other machines on your network:
 
-1. **Check service status:**
+1. **Verify dependencies are installed:**
+   ```bash
+   /opt/ragdoll/.venv/bin/python -c "import uvicorn, fastapi; print('OK')"
+   ```
+   If this fails, run: `/opt/ragdoll/.venv/bin/pip install -e .`
+
+2. **Verify service file uses venv Python:**
+   ```bash
+   sudo systemctl cat ragdoll-api | grep ExecStart
+   ```
+   Should show: `ExecStart=/opt/ragdoll/.venv/bin/python run_api.py`
+   If not, update it:
+   ```bash
+   cd /opt/ragdoll
+   sudo cp ragdoll-api.service /etc/systemd/system/
+   sudo systemctl daemon-reload
+   ```
+
+3. **Check service status:**
    ```bash
    sudo systemctl status ragdoll-api
    ```
 
-2. **Check if port is listening:**
+4. **Check if port is listening:**
    ```bash
    sudo netstat -tlnp | grep 9042
    # or
@@ -230,28 +248,28 @@ If the API server isn't accessible from other machines on your network:
    ```
    Should show `0.0.0.0:9042` or `:::9042`.
 
-3. **Check firewall (ufw on Ubuntu/Debian):**
+5. **Check firewall (ufw on Ubuntu/Debian):**
    ```bash
    sudo ufw status
    sudo ufw allow 9042/tcp
    ```
 
-4. **Check firewall (firewalld on RHEL/CentOS):**
+6. **Check firewall (firewalld on RHEL/CentOS):**
    ```bash
    sudo firewall-cmd --list-ports
    sudo firewall-cmd --permanent --add-port=9042/tcp
    sudo firewall-cmd --reload
    ```
 
-5. **Test locally first:**
+7. **Test locally first:**
    ```bash
    curl http://localhost:9042/rags
    ```
 
-6. **Check service logs:**
+8. **Check service logs:**
    ```bash
    sudo journalctl -u ragdoll-api -f
    ```
 
-7. **Verify the service is using the correct host:**
+9. **Verify the service is using the correct host:**
    The API server should bind to `0.0.0.0` (all interfaces). Check the service file uses `run_api.py` which sets `host="0.0.0.0"`.
