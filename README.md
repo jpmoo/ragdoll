@@ -213,3 +213,46 @@ Response includes:
 - `threshold`: Used threshold
 - `count`: Number of results
 - `results`: Array of matching chunks (sorted by similarity, highest first), each with: `group`, `source_path`, `source_name`, `source_type`, `chunk_index`, `text`, `artifact_type`, `artifact_path`, `page`, `similarity`
+
+### Troubleshooting API access
+
+If the API server isn't accessible from other machines on your network:
+
+1. **Check service status:**
+   ```bash
+   sudo systemctl status ragdoll-api
+   ```
+
+2. **Check if port is listening:**
+   ```bash
+   sudo netstat -tlnp | grep 9042
+   # or
+   sudo ss -tlnp | grep 9042
+   ```
+   Should show `0.0.0.0:9042` or `:::9042`.
+
+3. **Check firewall (ufw on Ubuntu/Debian):**
+   ```bash
+   sudo ufw status
+   sudo ufw allow 9042/tcp
+   ```
+
+4. **Check firewall (firewalld on RHEL/CentOS):**
+   ```bash
+   sudo firewall-cmd --list-ports
+   sudo firewall-cmd --permanent --add-port=9042/tcp
+   sudo firewall-cmd --reload
+   ```
+
+5. **Test locally first:**
+   ```bash
+   curl http://localhost:9042/rags
+   ```
+
+6. **Check service logs:**
+   ```bash
+   sudo journalctl -u ragdoll-api -f
+   ```
+
+7. **Verify the service is using the correct host:**
+   The API server should bind to `0.0.0.0` (all interfaces). Check the service file uses `run_api.py` which sets `host="0.0.0.0"`.
