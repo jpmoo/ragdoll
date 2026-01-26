@@ -36,8 +36,7 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
     return dot / (norm_a * norm_b)
 
 
-def _do_query(prompt: str, history: str | None, threshold: float) -> dict[str, Any]:
-    """Shared query logic for GET and POST endpoints."""
+def _expand_query(prompt: str, history: str | None) -> str:
     """Use LLM to produce a standalone description of the user's information need."""
     model = config.QUERY_MODEL
     url = (config.OLLAMA_HOST or "").rstrip("/")
