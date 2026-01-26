@@ -512,25 +512,49 @@ Different `artifact_type` values indicate different content:
 - **`text`**: Use directly in responses
 - **`chart_summary`**, **`table_summary`**, **`figure_summary`**: These are LLM-generated summaries. Consider mentioning "According to a chart/table in..." when citing
 
-### 5. **Cite Sources**
+### 5. **Cite Sources with Links**
 
-Always include source information in your chatbot responses:
+Always include source information and provide links to original documents:
 
 ```python
-def format_response(result):
-    """Format a RAG result for chatbot display."""
+def format_response(result, base_url: str = "http://localhost:9042"):
+    """Format a RAG result for chatbot display with source link."""
     text = result["text"]
     source = result["source_name"]
+    source_url = result.get("source_url")
     page = result.get("page")
     
     citation = f"Source: {source}"
     if page:
         citation += f" (page {page})"
     
+    if source_url:
+        full_url = f"{base_url}{source_url}"
+        citation += f" | [View document]({full_url})"
+    
     return f"{text}\n\n{citation}"
 ```
 
-### 6. **Batch Similar Queries**
+### 6. **Provide Document Access**
+
+When users ask to see the original document, use the `source_url`:
+
+```python
+def get_document_link(result, base_url: str = "http://localhost:9042"):
+    """Get full URL to fetch the source document."""
+    source_url = result.get("source_url")
+    if source_url:
+        return f"{base_url}{source_url}"
+    return None
+
+# Usage
+result = query_ragdoll("double-loop learning")[0]
+doc_link = get_document_link(result)
+if doc_link:
+    print(f"View full document: {doc_link}")
+```
+
+### 7. **Batch Similar Queries**
 
 If you need to query multiple related topics, consider batching or caching:
 
