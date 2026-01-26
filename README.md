@@ -160,7 +160,7 @@ From the install directory (e.g. `/opt/ragdoll`):
 ```bash
 cd /opt/ragdoll
 git pull origin main
-.venv/bin/pip install -e .
+.venv/bin/pip install -e .  # Install/update dependencies (required after adding FastAPI/uvicorn)
 ```
 
 If you run as systemd services, restart both:
@@ -168,6 +168,8 @@ If you run as systemd services, restart both:
 ```bash
 sudo systemctl restart ragdoll-ingest ragdoll-api
 ```
+
+**Important:** If you see `ModuleNotFoundError: No module named 'uvicorn'` in the API service logs, the dependencies weren't installed. Run `.venv/bin/pip install -e .` to install FastAPI and uvicorn.
 
 Your `env.ragdoll`, `data/`, and `sources/` are untouched by `git pull`. If `env.ragdoll.example` gains new variables, copy the new lines into your `env.ragdoll` as needed.
 
@@ -258,3 +260,11 @@ If the API server isn't accessible from other machines on your network:
 
 7. **Verify the service is using the correct host:**
    The API server should bind to `0.0.0.0` (all interfaces). Check the service file uses `run_api.py` which sets `host="0.0.0.0"`.
+
+8. **Missing dependencies (ModuleNotFoundError: No module named 'uvicorn'):**
+   After pulling updates, install new dependencies:
+   ```bash
+   cd /opt/ragdoll
+   .venv/bin/pip install -e .
+   ```
+   This installs FastAPI and uvicorn from `requirements.txt`.
