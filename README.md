@@ -190,13 +190,38 @@ curl http://localhost:9042/rags
 # Returns: {"collections": ["_root", "reports", "legal", ...]}
 ```
 
-**`POST /query`** — Semantic similarity search
+**`GET /query`** — Semantic similarity search (simple URL format)
 ```bash
+# Query all collections
+curl "http://localhost:9042/query?prompt=What%20is%20double-loop%20learning&threshold=0.45"
+
+# Query specific collection
+curl "http://localhost:9042/query?prompt=What%20is%20double-loop%20learning&group=edleadership&threshold=0.45"
+```
+
+Query parameters:
+- `prompt` (required): User's query/question
+- `history` (optional): Conversation history for context
+- `threshold` (optional, default: 0.45): Minimum similarity score (0.0-1.0)
+- `group` (optional): Specific collection/group to query; if absent, searches all collections
+
+**`POST /query`** — Semantic similarity search (JSON body)
+```bash
+# Query all collections
 curl -X POST http://localhost:9042/query \
   -H "Content-Type: application/json" \
   -d '{
     "prompt": "What is double-loop learning?",
     "history": "Previous conversation...",
+    "threshold": 0.45
+  }'
+
+# Query specific collection
+curl -X POST http://localhost:9042/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "What is double-loop learning?",
+    "group": "edleadership",
     "threshold": 0.45
   }'
 ```
@@ -205,6 +230,7 @@ Request body:
 - `prompt` (required): User's query/question
 - `history` (optional): Conversation history for context
 - `threshold` (optional, default: 0.45): Minimum similarity score (0.0-1.0)
+- `group` (optional): Specific collection/group to query; if absent, searches all collections
 
 Response includes:
 - `query`: Original prompt
