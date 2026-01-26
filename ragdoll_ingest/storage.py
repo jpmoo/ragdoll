@@ -189,7 +189,6 @@ def init_db(conn: sqlite3.Connection) -> None:
         ("artifact_type", "TEXT DEFAULT 'text'"),
         ("artifact_path", "TEXT"),
         ("page", "INTEGER"),
-        ("key_terms", "TEXT"),  # JSON array of key terms
     ]:
         try:
             conn.execute(f"ALTER TABLE chunks ADD COLUMN {col} {defn}")
@@ -216,7 +215,6 @@ def add_chunks(
         atype = c.get("artifact_type", "text")
         apath = c.get("artifact_path")
         page = c.get("page")
-        # key_terms column exists for backward compatibility but we no longer write to it
         conn.execute(
             "INSERT INTO chunks (source_path, source_type, chunk_index, text, embedding, artifact_type, artifact_path, page) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (source_path, source_type, i, text, json.dumps(emb), atype, apath, page),
