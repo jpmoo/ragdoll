@@ -39,19 +39,25 @@ def extract_key_phrases_from_filename(filename: str) -> list[str]:
     
     # Extract 2-3 word phrases from filename parts
     stop_words = {"the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with", "by", "from"}
-    meaningful_parts = [p.strip().lower() for p in parts if len(p.strip()) >= 3 and p.strip().lower() not in stop_words and not p.strip().isdigit()]
+    meaningful_parts = [p.strip().lower() for p in parts if p and p.strip() and len(p.strip()) >= 3 and p.strip().lower() not in stop_words and not p.strip().isdigit()]
+    
+    if not meaningful_parts:
+        return []
     
     # Create 2-word phrases
     for i in range(len(meaningful_parts) - 1):
-        phrase = f"{meaningful_parts[i]} {meaningful_parts[i+1]}"
-        if len(phrase) >= 6:  # At least 6 chars total
-            phrases.append(phrase)
+        if meaningful_parts[i] and meaningful_parts[i+1]:
+            phrase = f"{meaningful_parts[i]} {meaningful_parts[i+1]}"
+            if len(phrase) >= 6:  # At least 6 chars total
+                phrases.append(phrase)
     
     # Also include single meaningful words if they're substantial
     for part in meaningful_parts:
-        if len(part) >= 5:  # Only longer single words
+        if part and len(part) >= 5:  # Only longer single words
             phrases.append(part)
     
+    # Filter out any None or empty strings
+    phrases = [p for p in phrases if p and isinstance(p, str)]
     return phrases[:10]  # Limit to 10 phrases
 
 
@@ -89,7 +95,9 @@ def extract_key_phrases_from_text(text: str, max_phrases: int = 10) -> list[str]
     
     # Sort by frequency, return top phrases
     sorted_phrases = sorted(phrase_counts.items(), key=lambda x: x[1], reverse=True)
-    return [phrase for phrase, _ in sorted_phrases[:max_phrases]]
+    phrases = [phrase for phrase, _ in sorted_phrases[:max_phrases]]
+    # Filter out any None or empty strings (defensive)
+    return [p for p in phrases if p and isinstance(p, str)]
 
 _processed_cache: dict[str, set[tuple[str, float, int]]] = {}
 _processed_lock = threading.Lock()

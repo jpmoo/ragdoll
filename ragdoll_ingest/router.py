@@ -76,7 +76,7 @@ def route_image(
         ap = store_chart_image(group, source_stem, page_or_idx or 0, idx, image_bytes, ext or "png")
         filename_phrases = extract_key_phrases_from_filename(str(source_stem) if source_stem else "")
         ocr_phrases = extract_key_phrases_from_text(ocr or "")
-        all_phrases = list(set(filename_phrases + ocr_phrases))[:10]
+        all_phrases = [p for p in set(filename_phrases + ocr_phrases) if p and isinstance(p, str)][:10]
         # Append key phrases to summary text
         if all_phrases:
             summary = f"{summary} Key terms: {', '.join(all_phrases)}."
@@ -91,7 +91,7 @@ def route_image(
         filename_phrases = extract_key_phrases_from_filename(str(source_stem) if source_stem else "")
         table_text = " ".join(" ".join(str(c) if c is not None else "" for c in row) for row in (data or []) if row)
         table_phrases = extract_key_phrases_from_text(table_text)
-        all_phrases = list(set(filename_phrases + table_phrases))[:10]
+        all_phrases = [p for p in set(filename_phrases + table_phrases) if p and isinstance(p, str)][:10]
         # Append key phrases to summary text
         if all_phrases:
             summary = f"{summary} Key terms: {', '.join(all_phrases)}."
@@ -102,7 +102,7 @@ def route_image(
     ap = store_figure(group, source_stem, page_or_idx or 0, idx, image_bytes, process, ocr)
     filename_phrases = extract_key_phrases_from_filename(str(source_stem) if source_stem else "")
     ocr_phrases = extract_key_phrases_from_text(ocr or "")
-    all_phrases = list(set(filename_phrases + ocr_phrases))[:10]
+    all_phrases = [p for p in set(filename_phrases + ocr_phrases) if p and isinstance(p, str)][:10]
     # Append key phrases to summary text
     if all_phrases:
         summary = f"{summary} Key terms: {', '.join(all_phrases)}."

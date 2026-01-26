@@ -151,7 +151,7 @@ def _process_one(fpath: Path) -> None:
                 # Extract text from table data for key phrases (handle None values)
                 table_text = " ".join(" ".join(str(c) if c is not None else "" for c in row) for row in (tr.data or []) if row)
                 table_phrases = extract_key_phrases_from_text(table_text)
-                all_phrases = list(set(filename_phrases + table_phrases))[:10]
+                all_phrases = [p for p in set(filename_phrases + table_phrases) if p and isinstance(p, str)][:10]
                 # Append key phrases to summary text
                 if all_phrases:
                     summary = f"{summary} Key terms: {', '.join(all_phrases)}."
