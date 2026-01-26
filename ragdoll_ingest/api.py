@@ -73,6 +73,13 @@ def _expand_query(prompt: str, history: str | None) -> str:
 def list_rags() -> dict[str, Any]:
     """Return all recognized RAG collections (groups)."""
     groups = _list_sync_groups()
+    # Always include _root if DATA_DIR/_root exists (even if empty)
+    from . import config
+    root_dir = Path(config.DATA_DIR) / "_root"
+    if root_dir.exists() and root_dir.is_dir() and "_root" not in groups:
+        groups.append("_root")
+    # Sort for consistent output
+    groups.sort()
     return {"collections": groups}
 
 
