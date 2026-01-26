@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 import shutil
 import sqlite3
 import threading
@@ -11,6 +12,18 @@ from . import config
 from .action_log import log as action_log
 
 logger = logging.getLogger(__name__)
+
+
+def clean_text(text: str) -> str:
+    """Strip newlines, normalize whitespace, and clean characters that interfere with meaning."""
+    if not text:
+        return ""
+    # Replace newlines, carriage returns, tabs with spaces
+    text = text.replace("\n", " ").replace("\r", " ").replace("\t", " ")
+    # Normalize multiple spaces to single space
+    text = re.sub(r" +", " ", text)
+    # Strip leading/trailing whitespace
+    return text.strip()
 
 _processed_cache: dict[str, set[tuple[str, float, int]]] = {}
 _processed_lock = threading.Lock()
@@ -122,7 +135,7 @@ def add_chunks(
     """
     init_db(conn)
     for i, c in enumerate(chunks):
-        text = c.get("text", "")
+        text = clean_text(c.get("text", ""))
         emb = c.get("embedding", [])
         atype = c.get("artifact_type", "text")
         apath = c.get("artifact_path")
@@ -143,7 +156,7 @@ def append_samples_jsonl(chunks: list[dict], source_path: str, source_type: str,
         with open(gp.samples_path, "a", encoding="utf-8") as f:
             for i, c in enumerate(chunks):
                 rec = {
-                    "text": c.get("text", ""),
+                    "text": clean_text(c.get("text", "")),
                     "embedding": c.get("embedding", []),
                     "source": source_path,
                     "source_type": source_type,
@@ -168,7 +181,7 @@ def build_jsonl_from_db(conn: sqlite3.Connection, group: str) -> None:
         with open(gp.samples_path, "w", encoding="utf-8") as f:
             for r in rows:
                 rec = {
-                    "text": r["text"],
+                    "text": clean_text(r["text"]),
                     "embedding": json.loads(r["embedding"]),
                     "source": r["source_path"],
                     "source_type": r["source_type"],

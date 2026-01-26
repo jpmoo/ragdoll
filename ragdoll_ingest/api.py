@@ -13,7 +13,7 @@ from pydantic import BaseModel
 
 from . import config
 from .embedder import embed
-from .storage import _connect, _list_sync_groups, init_db
+from .storage import _connect, _list_sync_groups, clean_text, init_db
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +115,7 @@ def _do_query(prompt: str, history: str | None, threshold: float) -> dict[str, A
                             "source_type": row["source_type"],
                             "source_name": Path(row["source_path"]).name,
                             "chunk_index": row["chunk_index"],
-                            "text": row["text"],
+                            "text": clean_text(row["text"]),
                             "artifact_type": row["artifact_type"] or "text",
                             "artifact_path": row["artifact_path"],
                             "page": row["page"],
