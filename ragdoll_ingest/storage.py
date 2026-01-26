@@ -26,45 +26,70 @@ def clean_text(text: str) -> str:
     return text.strip()
 
 
-def extract_key_terms_from_filename(filename: str) -> list[str]:
-    """Extract key terms from filename by splitting on common delimiters."""
+def extract_key_phrases_from_filename(filename: str) -> list[str]:
+    """Extract descriptive phrases from filename (multi-word terms)."""
     if not filename:
         return []
     # Remove extension
     stem = Path(filename).stem
-    # Split on common delimiters: underscore, hyphen, space, period
+    # Split on common delimiters but preserve meaningful sequences
+    # First, try to preserve camelCase and TitleCase
     parts = re.split(r"[_\-\s\.]+", stem)
-    # Filter out very short words, numbers, and common stop words
+    phrases = []
+    
+    # Extract 2-3 word phrases from filename parts
     stop_words = {"the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with", "by", "from"}
-    terms = []
-    for part in parts:
-        part = part.strip().lower()
-        if len(part) >= 3 and part not in stop_words and not part.isdigit():
-            terms.append(part)
-    return terms
+    meaningful_parts = [p.strip().lower() for p in parts if len(p.strip()) >= 3 and p.strip().lower() not in stop_words and not p.strip().isdigit()]
+    
+    # Create 2-word phrases
+    for i in range(len(meaningful_parts) - 1):
+        phrase = f"{meaningful_parts[i]} {meaningful_parts[i+1]}"
+        if len(phrase) >= 6:  # At least 6 chars total
+            phrases.append(phrase)
+    
+    # Also include single meaningful words if they're substantial
+    for part in meaningful_parts:
+        if len(part) >= 5:  # Only longer single words
+            phrases.append(part)
+    
+    return phrases[:10]  # Limit to 10 phrases
 
 
-def extract_key_terms_from_text(text: str, max_terms: int = 10) -> list[str]:
-    """Extract key terms from text (simple approach: significant words, excluding common stop words)."""
+def extract_key_phrases_from_text(text: str, max_phrases: int = 10) -> list[str]:
+    """Extract descriptive phrases from text (2-3 word n-grams, excluding stop words)."""
     if not text:
         return []
-    # Common stop words
+    
     stop_words = {
         "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with", "by", "from",
         "is", "are", "was", "were", "be", "been", "being", "have", "has", "had", "do", "does", "did",
         "will", "would", "should", "could", "may", "might", "must", "can", "this", "that", "these", "those",
-        "it", "its", "they", "them", "their", "there", "then", "than", "what", "which", "who", "when", "where", "why", "how"
+        "it", "its", "they", "them", "their", "there", "then", "than", "what", "which", "who", "when", "where", "why", "how",
+        "as", "if", "so", "not", "no", "yes", "up", "down", "out", "off", "over", "under", "again", "further",
     }
+    
     # Extract words (alphanumeric, at least 3 chars)
-    words = re.findall(r"\b[a-zA-Z]{3,}\b", text.lower())
-    # Count frequency
-    word_counts: dict[str, int] = {}
-    for word in words:
-        if word not in stop_words:
-            word_counts[word] = word_counts.get(word, 0) + 1
-    # Sort by frequency, return top terms
-    sorted_terms = sorted(word_counts.items(), key=lambda x: x[1], reverse=True)
-    return [term for term, _ in sorted_terms[:max_terms]]
+    words = [w.lower() for w in re.findall(r"\b[a-zA-Z]{3,}\b", text.lower()) if w.lower() not in stop_words]
+    
+    if len(words) < 2:
+        return []
+    
+    # Extract 2-word phrases
+    phrase_counts: dict[str, int] = {}
+    for i in range(len(words) - 1):
+        phrase = f"{words[i]} {words[i+1]}"
+        if len(phrase) >= 6:  # At least 6 chars
+            phrase_counts[phrase] = phrase_counts.get(phrase, 0) + 1
+    
+    # Extract 3-word phrases
+    for i in range(len(words) - 2):
+        phrase = f"{words[i]} {words[i+1]} {words[i+2]}"
+        if len(phrase) >= 10:  # At least 10 chars
+            phrase_counts[phrase] = phrase_counts.get(phrase, 0) + 1
+    
+    # Sort by frequency, return top phrases
+    sorted_phrases = sorted(phrase_counts.items(), key=lambda x: x[1], reverse=True)
+    return [phrase for phrase, _ in sorted_phrases[:max_phrases]]
 
 _processed_cache: dict[str, set[tuple[str, float, int]]] = {}
 _processed_lock = threading.Lock()
@@ -172,8 +197,9 @@ def add_chunks(
     chunks: list[dict],
 ) -> None:
     """
-    chunks: list of {text, embedding, artifact_type?, artifact_path?, page?, key_terms?}.
-    Defaults: artifact_type='text', artifact_path=None, page=None, key_terms=None.
+    chunks: list of {text, embedding, artifact_type?, artifact_path?, page?}.
+    Defaults: artifact_type='text', artifact_path=None, page=None.
+    Note: key phrases are now embedded in the text field itself (appended as "Key terms: ...").
     """
     init_db(conn)
     for i, c in enumerate(chunks):
@@ -182,11 +208,10 @@ def add_chunks(
         atype = c.get("artifact_type", "text")
         apath = c.get("artifact_path")
         page = c.get("page")
-        key_terms = c.get("key_terms")
-        key_terms_json = json.dumps(key_terms) if key_terms else None
+        # key_terms column exists for backward compatibility but we no longer write to it
         conn.execute(
-            "INSERT INTO chunks (source_path, source_type, chunk_index, text, embedding, artifact_type, artifact_path, page, key_terms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (source_path, source_type, i, text, json.dumps(emb), atype, apath, page, key_terms_json),
+            "INSERT INTO chunks (source_path, source_type, chunk_index, text, embedding, artifact_type, artifact_path, page) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (source_path, source_type, i, text, json.dumps(emb), atype, apath, page),
         )
 
 
@@ -208,7 +233,6 @@ def append_samples_jsonl(chunks: list[dict], source_path: str, source_type: str,
                     "artifact_type": c.get("artifact_type", "text"),
                     "artifact_path": c.get("artifact_path"),
                     "page": c.get("page"),
-                    "key_terms": c.get("key_terms"),
                 }
                 f.write(json.dumps(rec, ensure_ascii=False) + "\n")
     logger.info("Appended %d samples to %s (group=%s)", len(chunks), gp.samples_path, group)
@@ -218,14 +242,13 @@ def build_jsonl_from_db(conn: sqlite3.Connection, group: str) -> None:
     """Overwrite the group's JSONL with all chunks from the DB. Holds _jsonl_lock."""
     init_db(conn)
     rows = conn.execute(
-        "SELECT source_path, source_type, chunk_index, text, embedding, artifact_type, artifact_path, page, key_terms FROM chunks ORDER BY source_path, chunk_index"
+        "SELECT source_path, source_type, chunk_index, text, embedding, artifact_type, artifact_path, page FROM chunks ORDER BY source_path, chunk_index"
     ).fetchall()
     gp = config.get_group_paths(group)
     gp.group_dir.mkdir(parents=True, exist_ok=True)
     with _jsonl_lock:
         with open(gp.samples_path, "w", encoding="utf-8") as f:
             for r in rows:
-                key_terms = json.loads(r["key_terms"]) if r["key_terms"] else None
                 rec = {
                     "text": clean_text(r["text"]),
                     "embedding": json.loads(r["embedding"]),
@@ -235,7 +258,6 @@ def build_jsonl_from_db(conn: sqlite3.Connection, group: str) -> None:
                     "artifact_type": r["artifact_type"] or "text",
                     "artifact_path": r["artifact_path"],
                     "page": r["page"],
-                    "key_terms": key_terms,
                 }
                 f.write(json.dumps(rec, ensure_ascii=False) + "\n")
     logger.info("Built %s from DB (%d chunks, group=%s)", gp.samples_path, len(rows), group)

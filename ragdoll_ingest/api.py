@@ -105,7 +105,7 @@ def _do_query(prompt: str, history: str | None, threshold: float) -> dict[str, A
         try:
             init_db(conn)
             rows = conn.execute(
-                "SELECT source_path, source_type, chunk_index, text, embedding, artifact_type, artifact_path, page, key_terms FROM chunks"
+                "SELECT source_path, source_type, chunk_index, text, embedding, artifact_type, artifact_path, page FROM chunks"
             ).fetchall()
             
             for row in rows:
@@ -114,7 +114,6 @@ def _do_query(prompt: str, history: str | None, threshold: float) -> dict[str, A
                     similarity = _cosine_similarity(query_emb, chunk_emb)
                     
                     if similarity >= threshold:
-                        key_terms = json.loads(row["key_terms"]) if row["key_terms"] else None
                         all_results.append({
                             "group": group,
                             "source_path": row["source_path"],
@@ -125,7 +124,6 @@ def _do_query(prompt: str, history: str | None, threshold: float) -> dict[str, A
                             "artifact_type": row["artifact_type"] or "text",
                             "artifact_path": row["artifact_path"],
                             "page": row["page"],
-                            "key_terms": key_terms,
                             "similarity": round(similarity, 4),
                         })
                 except (json.JSONDecodeError, ValueError) as e:
