@@ -15,6 +15,7 @@ from .action_log import log as action_log
 from .artifacts import store_chart_image, store_figure, store_table
 from .chunker import chunk_text
 from .embedder import embed
+from .garbage_control import filter_chunks
 from .extractors import extract_document, extract_text, ocr_image_bytes
 from .interpreters import interpret_chart, interpret_figure, interpret_table
 from .router import route_image
@@ -189,6 +190,15 @@ def _process_one(fpath: Path) -> None:
 
     if not chunks_list:
         action_log("chunk_empty", file=str(p), group=group)
+        _move_to(p, root, config.FAILED_SUBDIR, group)
+        return
+
+    # Garbage control: filter chunks before embedding
+    chunks_list = filter_chunks(chunks_list, str(p), group)
+    
+    if not chunks_list:
+        action_log("chunk_all_rejected", file=str(p), group=group)
+        logger.warning("All chunks rejected by garbage control for %s, moving to failed", p)
         _move_to(p, root, config.FAILED_SUBDIR, group)
         return
 
