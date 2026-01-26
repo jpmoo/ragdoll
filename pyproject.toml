@@ -18,6 +18,8 @@ dependencies = [
     "pdfplumber>=0.10.0",
     "Pillow>=10.0.0",
     "pytesseract>=0.3.10",
+    "fastapi>=0.104.0",
+    "uvicorn>=0.24.0",
 ]
 
 [project.scripts]
