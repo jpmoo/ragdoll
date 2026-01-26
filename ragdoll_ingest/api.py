@@ -36,7 +36,8 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
     return dot / (norm_a * norm_b)
 
 
-def _expand_query(prompt: str, history: str | None) -> str:
+def _do_query(prompt: str, history: str | None, threshold: float) -> dict[str, Any]:
+    """Shared query logic for GET and POST endpoints."""
     """Use LLM to produce a standalone description of the user's information need."""
     model = config.QUERY_MODEL
     url = (config.OLLAMA_HOST or "").rstrip("/")
@@ -78,12 +79,11 @@ def list_rags() -> dict[str, Any]:
     return {"collections": groups}
 
 
-@app.post("/query")
-def query_rag(request: QueryRequest) -> dict[str, Any]:
-    """Query RAG collections with semantic similarity search."""
+def _do_query(prompt: str, history: str | None, threshold: float) -> dict[str, Any]:
+    """Shared query logic for GET and POST endpoints."""
     # Combine prompt and history, expand via LLM
-    expanded = _expand_query(request.prompt, request.history)
-    logger.info("Query expansion: %s -> %s", request.prompt[:100], expanded[:100])
+    expanded = _expand_query(prompt, history)
+    logger.info("Query expansion: %s -> %s", prompt[:100], expanded[:100])
     
     # Embed the expanded query
     try:
@@ -109,7 +109,7 @@ def query_rag(request: QueryRequest) -> dict[str, Any]:
                     chunk_emb = json.loads(row["embedding"])
                     similarity = _cosine_similarity(query_emb, chunk_emb)
                     
-                    if similarity >= request.threshold:
+                    if similarity >= threshold:
                         all_results.append({
                             "group": group,
                             "source_path": row["source_path"],
@@ -132,12 +132,24 @@ def query_rag(request: QueryRequest) -> dict[str, Any]:
     all_results.sort(key=lambda x: x["similarity"], reverse=True)
     
     return {
-        "query": request.prompt,
+        "query": prompt,
         "expanded_query": expanded,
-        "threshold": request.threshold,
+        "threshold": threshold,
         "results": all_results,
         "count": len(all_results),
     }
+
+
+@app.get("/query")
+def query_rag_get(prompt: str, history: str | None = None, threshold: float = 0.60) -> dict[str, Any]:
+    """Query RAG collections via GET (simple URL format)."""
+    return _do_query(prompt, history, threshold)
+
+
+@app.post("/query")
+def query_rag(request: QueryRequest) -> dict[str, Any]:
+    """Query RAG collections with semantic similarity search."""
+    return _do_query(request.prompt, request.history, request.threshold)
 
 
 if __name__ == "__main__":
