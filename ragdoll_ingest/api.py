@@ -24,6 +24,7 @@ class QueryRequest(BaseModel):
     prompt: str
     history: str | None = None
     threshold: float = 0.45
+    group: str | None = None  # Optional: specific collection/group to query; if None, searches all
 
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
@@ -83,8 +84,15 @@ def list_rags() -> dict[str, Any]:
     return {"collections": groups}
 
 
-def _do_query(prompt: str, history: str | None, threshold: float) -> dict[str, Any]:
-    """Shared query logic for GET and POST endpoints."""
+def _do_query(prompt: str, history: str | None, threshold: float, group: str | None = None) -> dict[str, Any]:
+    """Shared query logic for GET and POST endpoints.
+    
+    Args:
+        prompt: User's query/question
+        history: Optional conversation history
+        threshold: Minimum similarity score (0.0-1.0)
+        group: Optional specific collection/group to query; if None, searches all collections
+    """
     # Combine prompt and history, expand via LLM
     expanded = _expand_query(prompt, history)
     logger.info("Query expansion: %s -> %s", prompt[:100], expanded[:100])
@@ -96,12 +104,21 @@ def _do_query(prompt: str, history: str | None, threshold: float) -> dict[str, A
         logger.error("Embedding failed: %s", e)
         raise HTTPException(status_code=500, detail=f"Embedding failed: {e}")
     
-    # Search all groups
+    # Determine which groups to search
     all_results: list[dict[str, Any]] = []
-    groups = _list_sync_groups()
+    if group:
+        # Query specific group only
+        groups = [group]
+        # Validate group exists
+        all_groups = _list_sync_groups()
+        if group not in all_groups:
+            raise HTTPException(status_code=404, detail=f"Collection '{group}' not found. Available collections: {all_groups}")
+    else:
+        # Query all groups
+        groups = _list_sync_groups()
     
-    for group in groups:
-        conn = _connect(group)
+    for group_name in groups:
+        conn = _connect(group_name)
         try:
             init_db(conn)
             rows = conn.execute(
@@ -115,7 +132,7 @@ def _do_query(prompt: str, history: str | None, threshold: float) -> dict[str, A
                     
                     if similarity >= threshold:
                         all_results.append({
-                            "group": group,
+                            "group": group_name,
                             "source_path": row["source_path"],
                             "source_type": row["source_type"],
                             "source_name": Path(row["source_path"]).name,
@@ -127,7 +144,7 @@ def _do_query(prompt: str, history: str | None, threshold: float) -> dict[str, A
                             "similarity": round(similarity, 4),
                         })
                 except (json.JSONDecodeError, ValueError) as e:
-                    logger.warning("Invalid embedding for chunk %s/%s/%d: %s", group, row["source_path"], row["chunk_index"], e)
+                    logger.warning("Invalid embedding for chunk %s/%s/%d: %s", group_name, row["source_path"], row["chunk_index"], e)
                     continue
         finally:
             conn.close()
@@ -145,15 +162,29 @@ def _do_query(prompt: str, history: str | None, threshold: float) -> dict[str, A
 
 
 @app.get("/query")
-def query_rag_get(prompt: str, history: str | None = None, threshold: float = 0.45) -> dict[str, Any]:
-    """Query RAG collections via GET (simple URL format)."""
-    return _do_query(prompt, history, threshold)
+def query_rag_get(prompt: str, history: str | None = None, threshold: float = 0.45, group: str | None = None) -> dict[str, Any]:
+    """Query RAG collections via GET (simple URL format).
+    
+    Query parameters:
+    - prompt: User's query/question (required)
+    - history: Optional conversation history
+    - threshold: Minimum similarity score (default: 0.45)
+    - group: Optional specific collection/group to query; if absent, searches all collections
+    """
+    return _do_query(prompt, history, threshold, group)
 
 
 @app.post("/query")
 def query_rag(request: QueryRequest) -> dict[str, Any]:
-    """Query RAG collections with semantic similarity search."""
-    return _do_query(request.prompt, request.history, request.threshold)
+    """Query RAG collections with semantic similarity search.
+    
+    Request body:
+    - prompt: User's query/question (required)
+    - history: Optional conversation history
+    - threshold: Minimum similarity score (default: 0.45)
+    - group: Optional specific collection/group to query; if absent, searches all collections
+    """
+    return _do_query(request.prompt, request.history, request.threshold, request.group)
 
 
 if __name__ == "__main__":
