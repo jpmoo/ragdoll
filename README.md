@@ -152,14 +152,14 @@ RAGDoll includes a CLI tool for managing collections and sources:
 # List all collections
 ragdoll collections
 
-# List all sources in a collection
+# List all sources in a collection (shows IDs)
 ragdoll list <collection>
 
-# Delete all chunks for a source (with confirmation)
-ragdoll delete <collection> <source_path>
+# Delete all chunks for a source by ID (with confirmation)
+ragdoll delete <collection> <source_id>
 
 # Delete without confirmation prompt
-ragdoll delete <collection> <source_path> --yes
+ragdoll delete <collection> <source_id> --yes
 ```
 
 **Examples:**
@@ -172,17 +172,24 @@ ragdoll collections
 #   - edleadership
 #   - reports
 
-# List sources in a collection
+# List sources in a collection (with IDs)
 ragdoll list edleadership
 # Output:
 # Found 5 source(s) in collection 'edleadership':
-#   - sources/document1.pdf (42 chunks)
-#   - sources/document2.docx (18 chunks)
-#   ...
+# ID     Source Path                                          Chunks    
+# --------------------------------------------------------------------------------
+# 1      sources/document1.pdf                                42        
+# 2      sources/document2.docx                               18        
+# ...
+# --------------------------------------------------------------------------------
+# Total: 156 chunks across 5 source(s)
 
-# Delete chunks for a source
-ragdoll delete edleadership sources/document1.pdf
+# Delete chunks for a source by ID
+ragdoll delete edleadership 1
 # Prompts: "Are you sure? (yes/no):"
+# Warning: This will delete 42 chunks from source ID 1:
+#   Path: sources/document1.pdf
+#   Type: .pdf
 ```
 
 After installing with `pip install -e .`, the `ragdoll` command is available in your PATH.
