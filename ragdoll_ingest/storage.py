@@ -231,6 +231,24 @@ def run_dedup(conn: sqlite3.Connection) -> int:
     return n_before - n_after
 
 
+def delete_source(conn: sqlite3.Connection, source_path: str) -> int:
+    """Delete all chunks for a given source_path. Returns number of rows deleted."""
+    init_db(conn)
+    n_before = conn.execute("SELECT COUNT(*) FROM chunks WHERE source_path = ?", (source_path,)).fetchone()[0]
+    conn.execute("DELETE FROM chunks WHERE source_path = ?", (source_path,))
+    n_after = conn.execute("SELECT COUNT(*) FROM chunks WHERE source_path = ?", (source_path,)).fetchone()[0]
+    return n_before - n_after
+
+
+def list_sources(conn: sqlite3.Connection) -> list[tuple[str, int]]:
+    """List all unique source_paths with their chunk counts. Returns list of (source_path, count) tuples."""
+    init_db(conn)
+    rows = conn.execute(
+        "SELECT source_path, COUNT(*) as count FROM chunks GROUP BY source_path ORDER BY source_path"
+    ).fetchall()
+    return [(row["source_path"], row["count"]) for row in rows]
+
+
 def _list_sync_groups() -> list[str]:
     """Group dirs under DATA_DIR that have ragdoll.db."""
     d = Path(config.DATA_DIR)

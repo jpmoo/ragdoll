@@ -24,6 +24,7 @@ dependencies = [
 
 [project.scripts]
 ragdoll-ingest = "ragdoll_ingest.__main__:main"
+ragdoll = "ragdoll_ingest.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
