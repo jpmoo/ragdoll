@@ -47,7 +47,7 @@ Optional env vars:
 |----------|---------|-------------|
 | `RAGDOLL_OUTPUT_PATH` | — | Output folder (takes precedence over `RAGDOLL_DATA_DIR`) |
 | `RAGDOLL_DATA_DIR` | `./data` | Output folder for per-group subdirs if `RAGDOLL_OUTPUT_PATH` is unset |
-| `RAGDOLL_SYNC_INTERVAL` | `300` | Seconds between DB↔JSONL sync (dedup, rebuild if needed). `0`=disabled |
+| `RAGDOLL_SYNC_INTERVAL` | `300` | Seconds between DB dedup sync. `0`=disabled |
 | `RAGDOLL_OLLAMA_HOST` | `http://localhost:11434` | Ollama API base URL |
 | `RAGDOLL_EMBED_MODEL` | `nomic-embed-text:latest` | Embedding model |
 | `RAGDOLL_CHUNK_MODEL` | `llama3.2:3b` | Model for semantic splitting of long paragraphs |
@@ -123,35 +123,26 @@ Only **one level of grouping** is used: each **direct subfolder** of the ingest 
 Each group gets its own:
 
 - **ragdoll.db** — SQLite `chunks`: `source_path`, `source_type`, `chunk_index`, `text`, `embedding`, `artifact_type`, `artifact_path`, `page`.
-- **rag_samples.jsonl** — One JSON per chunk: `text`, `embedding`, `source`, `source_type`, `chunk_index`, `artifact_type` (`text`|`chart_summary`|`table_summary`|`figure_summary`), `artifact_path`, `page`.
 - **processed.jsonl** — Dedup ledger: one `{path, mtime, size}` per successfully ingested file.
-- **action.log** — JSONL of AI calls, moves, extract/chunk/interpret/store, and sync actions (`sync_rebuild`, `sync_dedup`) for that group.
+- **action.log** — JSONL of AI calls, moves, extract/chunk/interpret/store, and sync actions (`sync_dedup`) for that group.
 - **sources/** — Ingested files moved here. Only one level of grouping: deeper paths are flattened to one filename in `sources/`.
 - **artifacts/** — Chart images (`charts/`), table JSON (`tables/`), figure image+process JSON (`figures/`). Only interpretations are embedded; raw data is stored here.
 
-If the output folder previously had a flat layout (`ragdoll.db`, `rag_samples.jsonl`, etc. at the top level), it is **migrated once** on startup into `_root/`.
+If the output folder previously had a flat layout (`ragdoll.db`, `processed.jsonl`, etc. at the top level), it is **migrated once** on startup into `_root/`.
 
 ## Output
 
-All outputs live under the **output folder** (`RAGDOLL_OUTPUT_PATH` or `RAGDOLL_DATA_DIR`) in **per-group subdirs** (see above). Use each group’s JSONL or DB in your own RAG/vector tools.
+All outputs live under the **output folder** (`RAGDOLL_OUTPUT_PATH` or `RAGDOLL_DATA_DIR`) in **per-group subdirs** (see above). Use each group’s DB in your own RAG/vector tools.
 
-- **SQLite** (`{group}/ragdoll.db`) — Chunks (source_path, source_type, chunk_index, text, embedding, artifact_type, artifact_path, page). Kept in sync with JSONL by a background sync pass.
-
-- **RAG samples** (`{group}/rag_samples.jsonl`): one JSON per chunk, e.g.:
-
-  ```json
-  {"text": "...", "embedding": [...], "source": "...", "source_type": ".pdf", "chunk_index": 0, "artifact_type": "text", "artifact_path": null, "page": 1}
-  ```
+- **SQLite** (`{group}/ragdoll.db`) — Chunks (source_path, source_type, chunk_index, text, embedding, artifact_type, artifact_path, page). A sync pass runs at startup and every `RAGDOLL_SYNC_INTERVAL` seconds **per group**: it deduplicates the DB (keeps one row per `source_path`+`chunk_index`).
 
   `artifact_type`: `text`, `chart_summary`, `table_summary`, or `figure_summary`. `artifact_path` points to `artifacts/charts/`, `artifacts/tables/`, or `artifacts/figures/` when present.
 
-  If the file is missing, it is recreated from the DB. A sync pass runs at startup and every `RAGDOLL_SYNC_INTERVAL` seconds **per group**: it deduplicates the DB (keeps one row per `source_path`+`chunk_index`), compares DB and JSONL counts, and rebuilds the JSONL from the DB when they differ or after a dedup.
-
-- **sources/** — Original documents are moved here from the ingest folder after successful processing. The `source` field in the JSONL/DB points to these paths. Only files are moved; ingest subfolders are left in place (even when empty).
+- **sources/** — Original documents are moved here from the ingest folder after successful processing. The `source_path` field in the DB points to these paths. Only files are moved; ingest subfolders are left in place (even when empty).
 
 - **Processed** (`{group}/processed.jsonl`) — Dedup ledger: one `{path, mtime, size}` per successfully ingested file in that group.
 
-- **Action log** (`{group}/action.log`) — JSONL of AI calls (embed, chunk_llm), file moves (src/to/reason), sync_rebuild, sync_dedup, and other actions for that group. Embedding vectors and long text are not written.
+- **Action log** (`{group}/action.log`) — JSONL of AI calls (embed, chunk_llm), file moves (src/to/reason), sync_dedup, and other actions for that group. Embedding vectors and long text are not written.
 
 ## Updating the app (on your server)
 

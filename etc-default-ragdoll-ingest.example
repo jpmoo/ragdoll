@@ -5,7 +5,7 @@
 RAGDOLL_INGEST_PATH=/path/to/your/ingest/folder
 
 # Optional: output folder. Each ingest subfolder becomes a group: {DATA_DIR}/{group}/ with its own
-# ragdoll.db, rag_samples.jsonl, processed.jsonl, action.log, sources/
+# ragdoll.db, processed.jsonl, action.log, sources/
 # RAGDOLL_OUTPUT_PATH=/var/lib/ragdoll
 # or: RAGDOLL_DATA_DIR=/var/lib/ragdoll
 

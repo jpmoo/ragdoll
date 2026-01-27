@@ -1,4 +1,4 @@
-"""Storage: SQLite chunks DB, JSONL samples, processed-file dedup. Sync keeps DB and JSONL identical. Per-group."""
+"""Storage: SQLite chunks DB, processed-file dedup. Per-group."""
 
 import json
 import logging
@@ -101,7 +101,6 @@ def extract_key_phrases_from_text(text: str, max_phrases: int = 10) -> list[str]
 
 _processed_cache: dict[str, set[tuple[str, float, int]]] = {}
 _processed_lock = threading.Lock()
-_jsonl_lock = threading.Lock()
 
 
 # --- Migration: flat DATA_DIR layout -> DATA_DIR/_root/ ---
@@ -114,7 +113,7 @@ def migrate_flat_to_root() -> None:
     if not flat_db.exists() or (root_dir / "ragdoll.db").exists():
         return
     root_dir.mkdir(parents=True, exist_ok=True)
-    for name in ["ragdoll.db", "rag_samples.jsonl", "processed.jsonl", "action.log"]:
+    for name in ["ragdoll.db", "processed.jsonl", "action.log"]:
         f = d / name
         if f.exists():
             shutil.move(str(f), str(root_dir / name))
@@ -221,54 +220,6 @@ def add_chunks(
         )
 
 
-# --- JSONL (samples, per group) ---
-
-def append_samples_jsonl(chunks: list[dict], source_path: str, source_type: str, group: str) -> None:
-    """Append new chunk samples to the group's JSONL. chunks: list of {text, embedding, artifact_type?, artifact_path?, page?}."""
-    gp = config.get_group_paths(group)
-    gp.group_dir.mkdir(parents=True, exist_ok=True)
-    with _jsonl_lock:
-        with open(gp.samples_path, "a", encoding="utf-8") as f:
-            for i, c in enumerate(chunks):
-                rec = {
-                    "text": clean_text(c.get("text", "")),
-                    "embedding": c.get("embedding", []),
-                    "source": source_path,
-                    "source_type": source_type,
-                    "chunk_index": i,
-                    "artifact_type": c.get("artifact_type", "text"),
-                    "artifact_path": c.get("artifact_path"),
-                    "page": c.get("page"),
-                }
-                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-    logger.info("Appended %d samples to %s (group=%s)", len(chunks), gp.samples_path, group)
-
-
-def build_jsonl_from_db(conn: sqlite3.Connection, group: str) -> None:
-    """Overwrite the group's JSONL with all chunks from the DB. Holds _jsonl_lock."""
-    init_db(conn)
-    rows = conn.execute(
-        "SELECT source_path, source_type, chunk_index, text, embedding, artifact_type, artifact_path, page FROM chunks ORDER BY source_path, chunk_index"
-    ).fetchall()
-    gp = config.get_group_paths(group)
-    gp.group_dir.mkdir(parents=True, exist_ok=True)
-    with _jsonl_lock:
-        with open(gp.samples_path, "w", encoding="utf-8") as f:
-            for r in rows:
-                rec = {
-                    "text": clean_text(r["text"]),
-                    "embedding": json.loads(r["embedding"]),
-                    "source": r["source_path"],
-                    "source_type": r["source_type"],
-                    "chunk_index": r["chunk_index"],
-                    "artifact_type": r["artifact_type"] or "text",
-                    "artifact_path": r["artifact_path"],
-                    "page": r["page"],
-                }
-                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-    logger.info("Built %s from DB (%d chunks, group=%s)", gp.samples_path, len(rows), group)
-
-
 def run_dedup(conn: sqlite3.Connection) -> int:
     """Remove duplicate (source_path, chunk_index), keeping min(id). Returns number of rows deleted."""
     init_db(conn)
@@ -281,24 +232,21 @@ def run_dedup(conn: sqlite3.Connection) -> int:
 
 
 def _list_sync_groups() -> list[str]:
-    """Group dirs under DATA_DIR that have ragdoll.db or rag_samples.jsonl."""
+    """Group dirs under DATA_DIR that have ragdoll.db."""
     d = Path(config.DATA_DIR)
     if not d.exists():
         return []
     return [
         x.name for x in d.iterdir()
-        if x.is_dir() and ((x / "ragdoll.db").exists() or (x / "rag_samples.jsonl").exists())
+        if x.is_dir() and (x / "ragdoll.db").exists()
     ]
 
 
 def run_sync_pass(group: str | None = None) -> None:
     """
-    Keep DB and JSONL identical for one or all groups:
+    Run dedup on DB for one or all groups:
     - If group is None: run for each existing group (discovered from DATA_DIR).
-    - If JSONL missing: build from DB.
     - Run dedup on DB (removes duplicate source_path+chunk_index).
-    - If counts differ (or dedup removed rows): rebuild JSONL from DB.
-    Skips rebuild when DB is empty and JSONL has data (migration from pre-DB).
     """
     groups = [group] if group is not None else _list_sync_groups()
     for g in groups:
@@ -309,32 +257,10 @@ def _run_sync_pass_one(group: str) -> None:
     conn = _connect(group)
     try:
         init_db(conn)
-        gp = config.get_group_paths(group)
-        samples_path = gp.samples_path
-
-        if not samples_path.exists():
-            build_jsonl_from_db(conn, group)
-            action_log("sync_rebuild", reason="jsonl_missing", count=conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0], group=group)
-            return
-
         n_deleted = run_dedup(conn)
         conn.commit()
         if n_deleted > 0:
             logger.info("Dedup removed %d duplicate chunk(s) (group=%s)", n_deleted, group)
             action_log("sync_dedup", n_deleted=n_deleted, group=group)
-
-        count_db = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
-
-        with open(samples_path, "r", encoding="utf-8") as f:
-            count_jsonl = sum(1 for _ in f)
-
-        need_rebuild = n_deleted > 0 or (
-            count_db != count_jsonl and not (count_db == 0 and count_jsonl > 0)
-        )
-        if need_rebuild:
-            build_jsonl_from_db(conn, group)
-            reason = "dedup" if n_deleted > 0 else "count_mismatch"
-            action_log("sync_rebuild", reason=reason, count_db=count_db, count_jsonl=count_jsonl, group=group)
-            logger.info("Reconciled JSONL with DB (dedup=%d, count_db=%d, count_jsonl=%d, group=%s)", n_deleted, count_db, count_jsonl, group)
     finally:
         conn.close()

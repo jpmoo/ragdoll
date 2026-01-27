@@ -38,12 +38,12 @@ def get_env_path(key: str, default: Path | None = None) -> Path | None:
 # Required: user-provided ingest folder
 INGEST_PATH = get_env_path("RAGDOLL_INGEST_PATH")
 
-# Optional: output folder for RAG JSONL and sources (user-specified)
+# Optional: output folder for RAG DB and sources (user-specified)
 # RAGDOLL_OUTPUT_PATH or RAGDOLL_DATA_DIR; each group gets {DATA_DIR}/{group}/ with its own
-# ragdoll.db, rag_samples.jsonl, processed.jsonl, action.log, sources/
+# ragdoll.db, processed.jsonl, action.log, sources/
 DATA_DIR = get_env_path("RAGDOLL_OUTPUT_PATH") or get_env_path("RAGDOLL_DATA_DIR") or (Path(__file__).resolve().parents[1] / "data")
 
-# Sync: reconcile DB and JSONL, dedup DB; run every N seconds (0 = disabled)
+# Sync: dedup DB; run every N seconds (0 = disabled)
 SYNC_INTERVAL = int(get_env("RAGDOLL_SYNC_INTERVAL") or "300")
 
 # Sources: original documents are moved here (inside each group dir) after successful ingest
@@ -59,14 +59,12 @@ class GroupPaths:
         *,
         group_dir: Path,
         rag_db_path: Path,
-        samples_path: Path,
         processed_path: Path,
         action_log_path: Path,
         sources_dir: Path,
     ):
         self.group_dir = group_dir
         self.rag_db_path = rag_db_path
-        self.samples_path = samples_path
         self.processed_path = processed_path
         self.action_log_path = action_log_path
         self.sources_dir = sources_dir
@@ -86,7 +84,6 @@ def get_group_paths(group: str) -> GroupPaths:
     return GroupPaths(
         group_dir=d,
         rag_db_path=d / "ragdoll.db",
-        samples_path=d / "rag_samples.jsonl",
         processed_path=d / "processed.jsonl",
         action_log_path=d / "action.log",
         sources_dir=d / SOURCES_SUBDIR,

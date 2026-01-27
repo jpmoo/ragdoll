@@ -237,7 +237,6 @@ def _process_one(fpath: Path) -> None:
         conn.commit()
     finally:
         conn.close()
-    append_samples_jsonl(chunks_list, str(dest), p.suffix.lower(), group)
     mark_processed(str(p), stat.st_mtime, stat.st_size, group)
     action_log("store", source=str(dest), num_chunks=len(chunks_list), group=group)
 
