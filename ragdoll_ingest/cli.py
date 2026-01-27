@@ -1,6 +1,7 @@
 """CLI tool for managing RAGDoll collections and sources."""
 
 import argparse
+import shutil
 import sys
 from pathlib import Path
 
@@ -103,12 +104,33 @@ def cmd_delete(args: argparse.Namespace) -> int:
                 print("Cancelled.")
                 return 0
         
-        # Delete
+        # Delete chunks from database
         deleted = delete_source_by_id(conn, source_id)
         conn.commit()
         
         if deleted > 0:
-            print(f"Deleted {deleted} chunk{'s' if deleted != 1 else ''} from source ID {source_id} ({source_path}) in collection '{group}'.")
+            # Move source file to deleted folder
+            gp = config.get_group_paths(group)
+            source_file = Path(source_path)
+            deleted_dir = gp.group_dir / "deleted"
+            deleted_dir.mkdir(parents=True, exist_ok=True)
+            
+            if source_file.exists() and source_file.is_file():
+                deleted_file = deleted_dir / source_file.name
+                # Handle filename conflicts by appending a number
+                counter = 1
+                while deleted_file.exists():
+                    stem = source_file.stem
+                    suffix = source_file.suffix
+                    deleted_file = deleted_dir / f"{stem}_{counter}{suffix}"
+                    counter += 1
+                
+                shutil.move(str(source_file), str(deleted_file))
+                print(f"Deleted {deleted} chunk{'s' if deleted != 1 else ''} from source ID {source_id} ({source_path}) in collection '{group}'.")
+                print(f"Moved source file to: {deleted_file}")
+            else:
+                print(f"Deleted {deleted} chunk{'s' if deleted != 1 else ''} from source ID {source_id} ({source_path}) in collection '{group}'.")
+                print(f"Note: Source file not found at {source_path}, may have been already moved or deleted.")
             return 0
         else:
             print(f"No chunks found for source ID {source_id} in collection '{group}'.", file=sys.stderr)
