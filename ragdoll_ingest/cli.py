@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 from . import config
-from .storage import _connect, _list_sync_groups, delete_source, init_db, list_sources
+from .storage import _connect, _list_sync_groups, delete_source_by_id, get_source_by_id, init_db, list_sources
 
 
 def cmd_collections(args: argparse.Namespace) -> int:
@@ -39,20 +39,31 @@ def cmd_list(args: argparse.Namespace) -> int:
             return 0
         
         print(f"Found {len(sources)} source(s) in collection '{group}':")
+        print(f"{'ID':<6} {'Source Path':<60} {'Chunks':<10}")
+        print("-" * 80)
         total_chunks = 0
-        for source_path, count in sources:
-            print(f"  - {source_path} ({count} chunk{'s' if count != 1 else ''})")
+        for source_id, source_path, count in sources:
+            # Truncate long paths for display
+            display_path = source_path if len(source_path) <= 58 else source_path[:55] + "..."
+            print(f"{source_id:<6} {display_path:<60} {count:<10}")
             total_chunks += count
-        print(f"\nTotal: {total_chunks} chunk{'s' if total_chunks != 1 else ''} across {len(sources)} source(s)")
+        print("-" * 80)
+        print(f"Total: {total_chunks} chunk{'s' if total_chunks != 1 else ''} across {len(sources)} source(s)")
         return 0
     finally:
         conn.close()
 
 
 def cmd_delete(args: argparse.Namespace) -> int:
-    """Delete all chunks for a source (with confirmation)."""
+    """Delete all chunks for a source by ID (with confirmation)."""
     group = args.collection
-    source_path = args.source
+    try:
+        source_id = int(args.source_id)
+    except ValueError:
+        print(f"Error: Source ID must be a number, got '{args.source_id}'.", file=sys.stderr)
+        print(f"Use 'ragdoll list {group}' to see source IDs.", file=sys.stderr)
+        return 1
+    
     collections = _list_sync_groups()
     
     if group not in collections:
@@ -64,33 +75,40 @@ def cmd_delete(args: argparse.Namespace) -> int:
     try:
         init_db(conn)
         # Check if source exists
-        sources = list_sources(conn)
-        source_dict = {path: count for path, count in sources}
-        
-        if source_path not in source_dict:
-            print(f"Error: Source '{source_path}' not found in collection '{group}'.", file=sys.stderr)
-            print(f"Use 'ragdoll list {group}' to see available sources.", file=sys.stderr)
+        source_info = get_source_by_id(conn, source_id)
+        if not source_info:
+            print(f"Error: Source ID {source_id} not found in collection '{group}'.", file=sys.stderr)
+            print(f"Use 'ragdoll list {group}' to see available source IDs.", file=sys.stderr)
             return 1
         
-        count = source_dict[source_path]
+        source_path, source_type = source_info
+        
+        # Get chunk count
+        count = conn.execute("SELECT COUNT(*) FROM chunks WHERE source_id = ?", (source_id,)).fetchone()[0]
+        
+        if count == 0:
+            print(f"Source ID {source_id} ({source_path}) has no chunks.", file=sys.stderr)
+            return 1
         
         # Confirmation prompt
         if not args.yes:
-            print(f"Warning: This will delete {count} chunk{'s' if count != 1 else ''} from source '{source_path}' in collection '{group}'.")
+            print(f"Warning: This will delete {count} chunk{'s' if count != 1 else ''} from source ID {source_id}:")
+            print(f"  Path: {source_path}")
+            print(f"  Type: {source_type}")
             response = input("Are you sure? (yes/no): ").strip().lower()
             if response not in ("yes", "y"):
                 print("Cancelled.")
                 return 0
         
         # Delete
-        deleted = delete_source(conn, source_path)
+        deleted = delete_source_by_id(conn, source_id)
         conn.commit()
         
         if deleted > 0:
-            print(f"Deleted {deleted} chunk{'s' if deleted != 1 else ''} from source '{source_path}' in collection '{group}'.")
+            print(f"Deleted {deleted} chunk{'s' if deleted != 1 else ''} from source ID {source_id} ({source_path}) in collection '{group}'.")
             return 0
         else:
-            print(f"No chunks found for source '{source_path}' in collection '{group}'.", file=sys.stderr)
+            print(f"No chunks found for source ID {source_id} in collection '{group}'.", file=sys.stderr)
             return 1
     finally:
         conn.close()
@@ -125,16 +143,16 @@ def main() -> int:
     # delete command
     delete_parser = subparsers.add_parser(
         "delete",
-        help="Delete all chunks for a source",
-        description="Delete all chunks associated with a specific source in a collection. Requires confirmation unless --yes is used."
+        help="Delete all chunks for a source by ID",
+        description="Delete all chunks associated with a specific source ID in a collection. Requires confirmation unless --yes is used. Use 'ragdoll list <collection>' to see source IDs."
     )
     delete_parser.add_argument(
         "collection",
         help="Collection name"
     )
     delete_parser.add_argument(
-        "source",
-        help="Source path to delete chunks for"
+        "source_id",
+        help="Source ID to delete chunks for (use 'ragdoll list <collection>' to see IDs)"
     )
     delete_parser.add_argument(
         "-y", "--yes",

@@ -173,17 +173,35 @@ def _connect(group: str) -> sqlite3.Connection:
 
 def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript("""
+        CREATE TABLE IF NOT EXISTS sources (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_path TEXT NOT NULL UNIQUE,
+            source_type TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS ix_sources_path ON sources(source_path);
+        
         CREATE TABLE IF NOT EXISTS chunks (
             id INTEGER PRIMARY KEY,
+            source_id INTEGER,
             source_path TEXT NOT NULL,
             source_type TEXT NOT NULL,
             chunk_index INTEGER NOT NULL,
             text TEXT NOT NULL,
             embedding TEXT NOT NULL,
-            created_at TEXT DEFAULT (datetime('now'))
+            created_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (source_id) REFERENCES sources(id)
         );
         CREATE INDEX IF NOT EXISTS ix_chunks_source ON chunks(source_path);
+        CREATE INDEX IF NOT EXISTS ix_chunks_source_id ON chunks(source_id);
     """)
+    
+    # Add source_id column to existing chunks tables (migration)
+    try:
+        conn.execute("ALTER TABLE chunks ADD COLUMN source_id INTEGER REFERENCES sources(id)")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
+    
     for col, defn in [
         ("artifact_type", "TEXT DEFAULT 'text'"),
         ("artifact_path", "TEXT"),
@@ -194,6 +212,21 @@ def init_db(conn: sqlite3.Connection) -> None:
         except sqlite3.OperationalError as e:
             if "duplicate" not in str(e).lower():
                 raise
+
+
+def _get_or_create_source(conn: sqlite3.Connection, source_path: str, source_type: str) -> int:
+    """Get or create a source record and return its ID."""
+    init_db(conn)
+    # Try to get existing source
+    row = conn.execute("SELECT id FROM sources WHERE source_path = ?", (source_path,)).fetchone()
+    if row:
+        return row["id"]
+    # Create new source
+    cursor = conn.execute(
+        "INSERT INTO sources (source_path, source_type) VALUES (?, ?)",
+        (source_path, source_type)
+    )
+    return cursor.lastrowid
 
 
 def add_chunks(
@@ -208,6 +241,7 @@ def add_chunks(
     Note: key phrases are now embedded in the text field itself (appended as "Key terms: ...").
     """
     init_db(conn)
+    source_id = _get_or_create_source(conn, source_path, source_type)
     for i, c in enumerate(chunks):
         text = clean_text(c.get("text", ""))
         emb = c.get("embedding", [])
@@ -215,8 +249,8 @@ def add_chunks(
         apath = c.get("artifact_path")
         page = c.get("page")
         conn.execute(
-            "INSERT INTO chunks (source_path, source_type, chunk_index, text, embedding, artifact_type, artifact_path, page) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (source_path, source_type, i, text, json.dumps(emb), atype, apath, page),
+            "INSERT INTO chunks (source_id, source_path, source_type, chunk_index, text, embedding, artifact_type, artifact_path, page) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (source_id, source_path, source_type, i, text, json.dumps(emb), atype, apath, page),
         )
 
 
@@ -231,22 +265,48 @@ def run_dedup(conn: sqlite3.Connection) -> int:
     return n_before - n_after
 
 
-def delete_source(conn: sqlite3.Connection, source_path: str) -> int:
-    """Delete all chunks for a given source_path. Returns number of rows deleted."""
+def delete_source_by_id(conn: sqlite3.Connection, source_id: int) -> int:
+    """Delete all chunks for a given source_id. Returns number of rows deleted."""
     init_db(conn)
-    n_before = conn.execute("SELECT COUNT(*) FROM chunks WHERE source_path = ?", (source_path,)).fetchone()[0]
-    conn.execute("DELETE FROM chunks WHERE source_path = ?", (source_path,))
-    n_after = conn.execute("SELECT COUNT(*) FROM chunks WHERE source_path = ?", (source_path,)).fetchone()[0]
+    n_before = conn.execute("SELECT COUNT(*) FROM chunks WHERE source_id = ?", (source_id,)).fetchone()[0]
+    conn.execute("DELETE FROM chunks WHERE source_id = ?", (source_id,))
+    # Also delete the source record if no chunks remain
+    conn.execute("DELETE FROM sources WHERE id = ? AND NOT EXISTS (SELECT 1 FROM chunks WHERE chunks.source_id = sources.id)", (source_id,))
+    n_after = conn.execute("SELECT COUNT(*) FROM chunks WHERE source_id = ?", (source_id,)).fetchone()[0]
     return n_before - n_after
 
 
-def list_sources(conn: sqlite3.Connection) -> list[tuple[str, int]]:
-    """List all unique source_paths with their chunk counts. Returns list of (source_path, count) tuples."""
+def get_source_by_id(conn: sqlite3.Connection, source_id: int) -> tuple[str, str] | None:
+    """Get source_path and source_type for a given source_id. Returns (source_path, source_type) or None."""
     init_db(conn)
-    rows = conn.execute(
-        "SELECT source_path, COUNT(*) as count FROM chunks GROUP BY source_path ORDER BY source_path"
-    ).fetchall()
-    return [(row["source_path"], row["count"]) for row in rows]
+    row = conn.execute("SELECT source_path, source_type FROM sources WHERE id = ?", (source_id,)).fetchone()
+    if row:
+        return (row["source_path"], row["source_type"])
+    return None
+
+
+def list_sources(conn: sqlite3.Connection) -> list[tuple[int, str, int]]:
+    """List all sources with their IDs and chunk counts. Returns list of (source_id, source_path, count) tuples."""
+    init_db(conn)
+    # Use sources table if it has data, otherwise fall back to chunks table
+    rows = conn.execute("""
+        SELECT s.id, s.source_path, COUNT(c.id) as count
+        FROM sources s
+        LEFT JOIN chunks c ON c.source_id = s.id
+        GROUP BY s.id, s.source_path
+        ORDER BY s.id
+    """).fetchall()
+    
+    if rows and rows[0]["id"] is not None:
+        # Sources table has data
+        return [(row["id"], row["source_path"], row["count"]) for row in rows]
+    else:
+        # Fallback: use chunks table directly (for databases without sources table populated)
+        rows = conn.execute(
+            "SELECT source_path, COUNT(*) as count FROM chunks GROUP BY source_path ORDER BY source_path"
+        ).fetchall()
+        # Assign temporary IDs starting from 1
+        return [(i + 1, row["source_path"], row["count"]) for i, row in enumerate(rows)]
 
 
 def _list_sync_groups() -> list[str]:
