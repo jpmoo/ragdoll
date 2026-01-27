@@ -310,6 +310,7 @@ def delete_source_by_id(conn: sqlite3.Connection, source_id: int) -> int:
 def get_source_by_id(conn: sqlite3.Connection, source_id: int) -> tuple[str, str] | None:
     """Get source_path and source_type for a given source_id. Returns (source_path, source_type) or None."""
     init_db(conn)
+    _migrate_sources_table(conn)  # Ensure migration is done
     row = conn.execute("SELECT source_path, source_type FROM sources WHERE id = ?", (source_id,)).fetchone()
     if row:
         return (row["source_path"], row["source_type"])
@@ -319,7 +320,9 @@ def get_source_by_id(conn: sqlite3.Connection, source_id: int) -> tuple[str, str
 def list_sources(conn: sqlite3.Connection) -> list[tuple[int, str, int]]:
     """List all sources with their IDs and chunk counts. Returns list of (source_id, source_path, count) tuples."""
     init_db(conn)
-    # Use sources table if it has data, otherwise fall back to chunks table
+    _migrate_sources_table(conn)  # Ensure migration is done
+    
+    # Use sources table (should be populated after migration)
     rows = conn.execute("""
         SELECT s.id, s.source_path, COUNT(c.id) as count
         FROM sources s
@@ -328,16 +331,11 @@ def list_sources(conn: sqlite3.Connection) -> list[tuple[int, str, int]]:
         ORDER BY s.id
     """).fetchall()
     
-    if rows and rows[0]["id"] is not None:
-        # Sources table has data
+    if rows:
         return [(row["id"], row["source_path"], row["count"]) for row in rows]
-    else:
-        # Fallback: use chunks table directly (for databases without sources table populated)
-        rows = conn.execute(
-            "SELECT source_path, COUNT(*) as count FROM chunks GROUP BY source_path ORDER BY source_path"
-        ).fetchall()
-        # Assign temporary IDs starting from 1
-        return [(i + 1, row["source_path"], row["count"]) for i, row in enumerate(rows)]
+    
+    # Fallback: no sources found (empty database)
+    return []
 
 
 def _list_sync_groups() -> list[str]:
