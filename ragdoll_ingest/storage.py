@@ -172,6 +172,7 @@ def _connect(group: str) -> sqlite3.Connection:
 
 
 def init_db(conn: sqlite3.Connection) -> None:
+    # Create sources table first
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS sources (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -180,7 +181,31 @@ def init_db(conn: sqlite3.Connection) -> None:
             created_at TEXT DEFAULT (datetime('now'))
         );
         CREATE INDEX IF NOT EXISTS ix_sources_path ON sources(source_path);
-        
+    """)
+    
+    # Check if chunks table exists and if it has source_id column
+    try:
+        # Try to get table info to see if it exists
+        conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='chunks'").fetchone()
+        # Table exists, check for source_id column
+        try:
+            conn.execute("SELECT source_id FROM chunks LIMIT 1")
+            has_source_id = True
+        except sqlite3.OperationalError:
+            has_source_id = False
+            # Add source_id column to existing table
+            try:
+                conn.execute("ALTER TABLE chunks ADD COLUMN source_id INTEGER")
+                logger.info("Added source_id column to existing chunks table")
+            except sqlite3.OperationalError as e:
+                if "duplicate" not in str(e).lower():
+                    logger.warning("Could not add source_id column: %s", e)
+    except Exception:
+        # Table doesn't exist, create it with source_id
+        has_source_id = True
+    
+    # Create chunks table if it doesn't exist (with source_id)
+    conn.executescript("""
         CREATE TABLE IF NOT EXISTS chunks (
             id INTEGER PRIMARY KEY,
             source_id INTEGER,
@@ -195,18 +220,6 @@ def init_db(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS ix_chunks_source ON chunks(source_path);
         CREATE INDEX IF NOT EXISTS ix_chunks_source_id ON chunks(source_id);
     """)
-    
-    # Add source_id column to existing chunks tables (migration)
-    try:
-        # Check if column exists by trying to select it
-        conn.execute("SELECT source_id FROM chunks LIMIT 1")
-    except sqlite3.OperationalError:
-        # Column doesn't exist, add it
-        try:
-            conn.execute("ALTER TABLE chunks ADD COLUMN source_id INTEGER")
-        except sqlite3.OperationalError as e:
-            if "duplicate" not in str(e).lower():
-                logger.warning("Could not add source_id column: %s", e)
     
     for col, defn in [
         ("artifact_type", "TEXT DEFAULT 'text'"),
