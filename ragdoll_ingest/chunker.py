@@ -73,20 +73,52 @@ def _llm_split_long(text: str, ollama_url: str, group: str = "_root") -> list[st
         r.raise_for_status()
         data = r.json()
         resp = (data.get("response") or "").strip()
-        # Handle markdown code block
-        if "```" in resp:
-            m = re.search(r"```(?:json)?\s*([\s\S]*?)```", resp)
-            if m:
-                resp = m.group(1).strip()
-        obj: dict[str, Any] = json.loads(resp)
-        chunks = obj.get("chunks")
-        if isinstance(chunks, list) and all(isinstance(c, str) for c in chunks) and chunks:
-            out = [c.strip() for c in chunks if c.strip()]
-            action_log("chunk_llm", model=config.CHUNK_MODEL, input_len=len(text), num_chunks=len(out), fallback=False, group=group)
-            return out
+        
+        # Check for empty response before parsing
+        if not resp:
+            logger.warning("LLM returned empty response (input_len=%d chars, ~%d tokens), using mid-split", 
+                          len(text), _tokens_approx(text))
+            # Fall through to fallback
+        else:
+            # Handle markdown code block
+            if "```" in resp:
+                m = re.search(r"```(?:json)?\s*([\s\S]*?)```", resp)
+                if m:
+                    resp = m.group(1).strip()
+            
+            try:
+                obj: dict[str, Any] = json.loads(resp)
+                chunks = obj.get("chunks")
+                
+                # Validate chunks structure
+                if isinstance(chunks, list) and chunks:
+                    # Check all items are strings
+                    if all(isinstance(c, str) for c in chunks):
+                        out = [c.strip() for c in chunks if c.strip()]
+                        if out:  # Ensure we have at least one non-empty chunk
+                            action_log("chunk_llm", model=config.CHUNK_MODEL, input_len=len(text), num_chunks=len(out), fallback=False, group=group)
+                            return out
+                    else:
+                        logger.warning("LLM returned chunks with non-string items (input_len=%d chars, ~%d tokens), using mid-split", 
+                                      len(text), _tokens_approx(text))
+                else:
+                    logger.warning("LLM returned invalid chunks format (expected list, got %s) (input_len=%d chars, ~%d tokens), using mid-split", 
+                                  type(chunks).__name__, len(text), _tokens_approx(text))
+            except json.JSONDecodeError as e:
+                logger.warning("LLM returned invalid JSON (input_len=%d chars, ~%d tokens): %s, using mid-split", 
+                              len(text), _tokens_approx(text), e)
+                # Fall through to fallback
+    except requests.exceptions.Timeout as e:
+        logger.warning("LLM split timed out after %d seconds (input_len=%d chars, ~%d tokens), using mid-split", 
+                      config.CHUNK_LLM_TIMEOUT, len(text), _tokens_approx(text))
+        # Fall through to fallback
+    except requests.exceptions.RequestException as e:
+        logger.warning("LLM request failed (input_len=%d chars, ~%d tokens): %s, using mid-split", 
+                      len(text), _tokens_approx(text), e)
+        # Fall through to fallback
     except Exception as e:
-        logger.warning("LLM split failed (input_len=%d chars, ~%d tokens), using mid-split: %s", 
-                       len(text), _tokens_approx(text), e)
+        logger.warning("LLM split failed unexpectedly (input_len=%d chars, ~%d tokens): %s, using mid-split", 
+                      len(text), _tokens_approx(text), e)
 
     # Fallback: split near the middle at a sentence or newline
     mid = len(text) // 2
