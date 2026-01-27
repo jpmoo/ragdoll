@@ -169,7 +169,7 @@ def main() -> int:
     delete_parser = subparsers.add_parser(
         "delete",
         help="Delete all chunks for a source by ID",
-        description="Delete all chunks associated with a specific source ID in a collection. Requires confirmation unless --yes is used. Use 'ragdoll list <collection>' to see source IDs."
+        description="Delete all chunks associated with a specific source ID in a collection. The source file will be moved to the collection's 'deleted/' folder. Requires confirmation unless --yes is used. Use 'ragdoll list <collection>' to see source IDs."
     )
     delete_parser.add_argument(
         "collection",
