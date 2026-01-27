@@ -198,9 +198,15 @@ def init_db(conn: sqlite3.Connection) -> None:
     
     # Add source_id column to existing chunks tables (migration)
     try:
-        conn.execute("ALTER TABLE chunks ADD COLUMN source_id INTEGER REFERENCES sources(id)")
+        # Check if column exists by trying to select it
+        conn.execute("SELECT source_id FROM chunks LIMIT 1")
     except sqlite3.OperationalError:
-        pass  # Column already exists
+        # Column doesn't exist, add it
+        try:
+            conn.execute("ALTER TABLE chunks ADD COLUMN source_id INTEGER")
+        except sqlite3.OperationalError as e:
+            if "duplicate" not in str(e).lower():
+                logger.warning("Could not add source_id column: %s", e)
     
     for col, defn in [
         ("artifact_type", "TEXT DEFAULT 'text'"),
@@ -217,13 +223,62 @@ def init_db(conn: sqlite3.Connection) -> None:
 def _migrate_sources_table(conn: sqlite3.Connection) -> None:
     """Migrate existing chunks to populate sources table and set source_id."""
     init_db(conn)
+    
+    # Check if source_id column exists
+    try:
+        conn.execute("SELECT source_id FROM chunks LIMIT 1")
+        has_source_id = True
+    except sqlite3.OperationalError:
+        has_source_id = False
+        # Try to add it
+        try:
+            conn.execute("ALTER TABLE chunks ADD COLUMN source_id INTEGER")
+        except sqlite3.OperationalError:
+            pass  # Might already exist or table doesn't exist yet
+    
     # Check if sources table needs migration (has chunks but no sources)
-    source_count = conn.execute("SELECT COUNT(*) FROM sources").fetchone()[0]
+    try:
+        source_count = conn.execute("SELECT COUNT(*) FROM sources").fetchone()[0]
+    except sqlite3.OperationalError:
+        # Sources table doesn't exist yet, init_db should have created it
+        source_count = 0
+    
     if source_count > 0:
-        return  # Already migrated
+        # Check if there are chunks without source_id that need updating
+        if has_source_id:
+            rows = conn.execute("""
+                SELECT DISTINCT c.source_path, c.source_type 
+                FROM chunks c 
+                WHERE c.source_id IS NULL
+            """).fetchall()
+            if rows:
+                for row in rows:
+                    source_path = row["source_path"]
+                    source_type = row["source_type"]
+                    # Get or create source
+                    src_row = conn.execute("SELECT id FROM sources WHERE source_path = ?", (source_path,)).fetchone()
+                    if src_row:
+                        source_id = src_row["id"]
+                    else:
+                        cursor = conn.execute(
+                            "INSERT INTO sources (source_path, source_type) VALUES (?, ?)",
+                            (source_path, source_type)
+                        )
+                        source_id = cursor.lastrowid
+                    # Update chunks with source_id
+                    conn.execute(
+                        "UPDATE chunks SET source_id = ? WHERE source_path = ? AND source_id IS NULL",
+                        (source_id, source_path)
+                    )
+                logger.info("Updated %d source paths with source_id", len(rows))
+        return  # Already has sources
     
     # Get all unique source_paths from chunks
-    rows = conn.execute("SELECT DISTINCT source_path, source_type FROM chunks").fetchall()
+    try:
+        rows = conn.execute("SELECT DISTINCT source_path, source_type FROM chunks").fetchall()
+    except sqlite3.OperationalError:
+        return  # No chunks table yet
+    
     if not rows:
         return  # No chunks to migrate
     
@@ -236,11 +291,12 @@ def _migrate_sources_table(conn: sqlite3.Connection) -> None:
             (source_path, source_type)
         )
         source_id = cursor.lastrowid
-        # Update chunks with source_id
-        conn.execute(
-            "UPDATE chunks SET source_id = ? WHERE source_path = ?",
-            (source_id, source_path)
-        )
+        # Update chunks with source_id (if column exists)
+        if has_source_id:
+            conn.execute(
+                "UPDATE chunks SET source_id = ? WHERE source_path = ?",
+                (source_id, source_path)
+            )
     logger.info("Migrated %d sources to sources table", len(rows))
 
 
