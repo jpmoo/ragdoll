@@ -39,13 +39,16 @@ def cmd_list(args: argparse.Namespace) -> int:
             return 0
         
         print(f"Found {len(sources)} source(s) in collection '{group}':")
-        print(f"{'ID':<6} {'Source Path':<60} {'Chunks':<10}")
+        print(f"{'ID':<6} {'Filename':<60} {'Chunks':<10}")
         print("-" * 80)
         total_chunks = 0
         for source_id, source_path, count in sources:
-            # Truncate long paths for display
-            display_path = source_path if len(source_path) <= 58 else source_path[:55] + "..."
-            print(f"{source_id:<6} {display_path:<60} {count:<10}")
+            # Extract just the filename from the path
+            from pathlib import Path
+            filename = Path(source_path).name
+            # Truncate long filenames for display
+            display_name = filename if len(filename) <= 58 else filename[:55] + "..."
+            print(f"{source_id:<6} {display_name:<60} {count:<10}")
             total_chunks += count
         print("-" * 80)
         print(f"Total: {total_chunks} chunk{'s' if total_chunks != 1 else ''} across {len(sources)} source(s)")
