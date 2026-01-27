@@ -214,9 +214,40 @@ def init_db(conn: sqlite3.Connection) -> None:
                 raise
 
 
+def _migrate_sources_table(conn: sqlite3.Connection) -> None:
+    """Migrate existing chunks to populate sources table and set source_id."""
+    init_db(conn)
+    # Check if sources table needs migration (has chunks but no sources)
+    source_count = conn.execute("SELECT COUNT(*) FROM sources").fetchone()[0]
+    if source_count > 0:
+        return  # Already migrated
+    
+    # Get all unique source_paths from chunks
+    rows = conn.execute("SELECT DISTINCT source_path, source_type FROM chunks").fetchall()
+    if not rows:
+        return  # No chunks to migrate
+    
+    # Create source records and update chunks
+    for row in rows:
+        source_path = row["source_path"]
+        source_type = row["source_type"]
+        cursor = conn.execute(
+            "INSERT INTO sources (source_path, source_type) VALUES (?, ?)",
+            (source_path, source_type)
+        )
+        source_id = cursor.lastrowid
+        # Update chunks with source_id
+        conn.execute(
+            "UPDATE chunks SET source_id = ? WHERE source_path = ?",
+            (source_id, source_path)
+        )
+    logger.info("Migrated %d sources to sources table", len(rows))
+
+
 def _get_or_create_source(conn: sqlite3.Connection, source_path: str, source_type: str) -> int:
     """Get or create a source record and return its ID."""
     init_db(conn)
+    _migrate_sources_table(conn)  # Ensure migration is done
     # Try to get existing source
     row = conn.execute("SELECT id FROM sources WHERE source_path = ?", (source_path,)).fetchone()
     if row:
