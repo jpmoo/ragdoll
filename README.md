@@ -144,6 +144,49 @@ All outputs live under the **output folder** (`RAGDOLL_OUTPUT_PATH` or `RAGDOLL_
 
 - **Action log** (`{group}/action.log`) — JSONL of AI calls (embed, chunk_llm), file moves (src/to/reason), sync_dedup, and other actions for that group. Embedding vectors and long text are not written.
 
+## CLI Tool
+
+RAGDoll includes a CLI tool for managing collections and sources:
+
+```bash
+# List all collections
+ragdoll collections
+
+# List all sources in a collection
+ragdoll list <collection>
+
+# Delete all chunks for a source (with confirmation)
+ragdoll delete <collection> <source_path>
+
+# Delete without confirmation prompt
+ragdoll delete <collection> <source_path> --yes
+```
+
+**Examples:**
+```bash
+# List all collections
+ragdoll collections
+# Output:
+# Found 3 collection(s):
+#   - _root
+#   - edleadership
+#   - reports
+
+# List sources in a collection
+ragdoll list edleadership
+# Output:
+# Found 5 source(s) in collection 'edleadership':
+#   - sources/document1.pdf (42 chunks)
+#   - sources/document2.docx (18 chunks)
+#   ...
+
+# Delete chunks for a source
+ragdoll delete edleadership sources/document1.pdf
+# Prompts: "Are you sure? (yes/no):"
+```
+
+After installing with `pip install -e .`, the `ragdoll` command is available in your PATH.
+
 ## Updating the app (on your server)
 
 From the install directory (e.g. `/opt/ragdoll`):
