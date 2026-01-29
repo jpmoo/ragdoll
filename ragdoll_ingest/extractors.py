@@ -59,26 +59,44 @@ class Document:
         )
 
 
+def _legacy_structured_ext() -> set:
+    """Extensions that have legacy structured extractors (PDF, DOCX, XLSX)."""
+    return config.PDF_EXT | config.WORD_EXT | config.EXCEL_EXT
+
+
+def _docling_only_ext() -> set:
+    """Extensions Docling supports but RAGDoll has no legacy structured extractor for (e.g. PPTX, images)."""
+    return _docling_ext() - _legacy_structured_ext()
+
+
 def extract_document(path: Path) -> Document | None:
     """
     Structured extraction for PDF, DOCX, Excel. Returns None for plain text, images, or unsupported.
-    When RAGDOLL_USE_DOCLING=true and docling is installed, tries Docling first for PDF/DOCX/XLSX/PPTX/image; falls back to legacy on failure.
+    - RAGDOLL_ALWAYS_USE_DOCLING=true: use Docling for every supported file (PDF/DOCX/XLSX/PPTX/image); fall back to legacy only on exception.
+    - RAGDOLL_ALWAYS_USE_DOCLING=false: use legacy for PDF/DOCX/XLSX; use Docling only for types RAGDoll doesn't cover (e.g. PPTX).
     - PDF: text blocks per page; low-text pages with images -> chart regions.
     - DOCX: paragraphs -> text; doc.tables -> table regions.
     - Excel: each sheet -> one table region.
     """
     path = Path(path)
     suffix = path.suffix.lower()
+    docling_ext = _docling_ext()
+    legacy_ext = _legacy_structured_ext()
+    docling_only_ext = _docling_only_ext()
 
-    # Optional: try Docling first when enabled (pip install '.[docling]', RAGDOLL_USE_DOCLING=true)
-    if config.USE_DOCLING and suffix in _docling_ext():
+    # Use Docling when: (always mode and suffix in Docling set) or (uncovered mode and suffix only supported by Docling)
+    use_docling = (config.ALWAYS_USE_DOCLING and suffix in docling_ext) or (suffix in docling_only_ext)
+    if use_docling:
         try:
             from .extractors_docling import extract_document_with_docling
             doc = extract_document_with_docling(path)
             if doc is not None and doc.has_embeddable():
                 return doc
         except Exception as e:
-            logger.debug("Docling extraction failed, using legacy: %s", e)
+            logger.debug("Docling extraction failed: %s", e)
+            # Fall back to legacy only for legacy-covered types when we tried Docling (always mode)
+            if not (suffix in legacy_ext and config.ALWAYS_USE_DOCLING):
+                return None
 
     if suffix in config.PDF_EXT:
         return _extract_pdf_document(path)

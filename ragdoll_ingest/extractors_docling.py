@@ -162,8 +162,8 @@ def extract_document_with_docling(path: Path) -> Document | None:
     doc = _docling_to_document(conv_res, path)
     if not doc.has_embeddable():
         return None
-    # For PDFs, if Docling produced very little prose, fall back to legacy (PyMuPDF) for better coverage
-    if suffix in config.PDF_EXT:
+    # When not always-use-Docling, sparse PDF output can fall back to legacy (caller will retry); when always-use, keep Docling result
+    if not config.ALWAYS_USE_DOCLING and suffix in config.PDF_EXT:
         prose_len = sum(len(blk.text) for blk in doc.text_blocks)
         if prose_len < 500:
             logger.info("Docling produced sparse prose for PDF (%d chars), falling back to legacy: %s", prose_len, path.name)

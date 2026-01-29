@@ -128,5 +128,5 @@ IMAGE_EXT = {".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp", ".gif"}
 
 SUPPORTED_EXT = TEXT_EXT | WORD_EXT | EXCEL_EXT | PDF_EXT | IMAGE_EXT
 
-# Docling: when True, use Docling for PDF/DOCX/XLSX/PPTX/image ingestion (fallback to legacy on failure)
-USE_DOCLING = (get_env("RAGDOLL_USE_DOCLING") or "false").lower() in ("true", "1", "yes")
+# Docling: when True, use Docling for every supported file (PDF/DOCX/XLSX/PPTX/image); when False, use Docling only for types RAGDoll has no legacy extractor for (e.g. PPTX, images as structured)
+ALWAYS_USE_DOCLING = (get_env("RAGDOLL_ALWAYS_USE_DOCLING") or "false").lower() in ("true", "1", "yes")

@@ -20,14 +20,14 @@ source .venv/bin/activate
 pip install -e .
 ```
 
-**Optional: Docling ingester** — For better table extraction and layout understanding (PDF, DOCX, XLSX, PPTX, images), install the Docling extra and enable it:
+**Optional: Docling ingester** — For better table extraction and layout understanding (PDF, DOCX, XLSX, PPTX, images), install the Docling extra:
 
 ```bash
 pip install -e '.[docling]'
-# In env.ragdoll: RAGDOLL_USE_DOCLING=true
+# In env.ragdoll: RAGDOLL_ALWAYS_USE_DOCLING=true to use Docling for every supported file; false = use Docling only for types RAGDoll doesn't cover (e.g. PPTX)
 ```
 
-Docling runs first when enabled; on failure or unsupported format the existing (legacy) extractors are used. Chunking, LLM interpretation of figures/tables, and embedding are unchanged.
+With `RAGDOLL_ALWAYS_USE_DOCLING=false` (default), Docling is used only for file types RAGDoll has no legacy extractor for (e.g. PPTX). With `true`, Docling is used for all supported types; legacy is used only on Docling exception. Chunking, LLM interpretation of figures/tables, and embedding are unchanged.
 
 ## Configuration
 
@@ -64,7 +64,7 @@ Optional env vars:
 | `RAGDOLL_TARGET_CHUNK_TOKENS` | `400` | Target size per chunk |
 | `RAGDOLL_MAX_CHUNK_TOKENS` | `600` | Max before LLM-assisted split |
 | `RAGDOLL_CHUNK_LLM_TIMEOUT` | `300` | Seconds to wait for Ollama (chunk split, chart/table interpret) |
-| `RAGDOLL_USE_DOCLING` | `false` | Use [Docling](https://docling-project.github.io/docling/) for PDF/DOCX/XLSX/PPTX/image ingestion when set to `true`; requires `pip install -e '.[docling]'`. Falls back to legacy extractors on failure. |
+| `RAGDOLL_ALWAYS_USE_DOCLING` | `false` | `true` = use [Docling](https://docling-project.github.io/docling/) for every supported file (PDF/DOCX/XLSX/PPTX/image); `false` = use Docling only for types RAGDoll doesn't cover (e.g. PPTX). Requires `pip install -e '.[docling]'`. |
 
 ## Run manually
 

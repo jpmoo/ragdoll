@@ -212,10 +212,14 @@ def unmark_processed(match: str, group: str) -> int:
 
 # --- DB (chunks, per group) ---
 
+# SQLite busy timeout (seconds): wait for lock instead of failing with "database is locked"
+SQLITE_TIMEOUT = 15
+
+
 def _connect(group: str) -> sqlite3.Connection:
     gp = config.get_group_paths(group)
     gp.group_dir.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(gp.rag_db_path))
+    conn = sqlite3.connect(str(gp.rag_db_path), timeout=SQLITE_TIMEOUT)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -483,7 +487,13 @@ def run_sync_pass(group: str | None = None) -> None:
 
 
 def _run_sync_pass_one(group: str) -> None:
-    conn = _connect(group)
+    try:
+        conn = _connect(group)
+    except sqlite3.OperationalError as e:
+        if "locked" in str(e).lower() or "busy" in str(e).lower():
+            logger.warning("Sync pass skipped for %s: database busy (%s); will retry next interval", group, e)
+            return
+        raise
     try:
         init_db(conn)
         n_deleted = run_dedup(conn)
@@ -491,5 +501,10 @@ def _run_sync_pass_one(group: str) -> None:
         if n_deleted > 0:
             logger.info("Dedup removed %d duplicate chunk(s) (group=%s)", n_deleted, group)
             action_log("sync_dedup", n_deleted=n_deleted, group=group)
+    except sqlite3.OperationalError as e:
+        if "locked" in str(e).lower() or "busy" in str(e).lower():
+            logger.warning("Sync pass skipped for %s: database busy during dedup (%s); will retry next interval", group, e)
+            return
+        raise
     finally:
         conn.close()
