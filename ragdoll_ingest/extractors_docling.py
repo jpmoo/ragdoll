@@ -33,23 +33,34 @@ def _docling_to_document(conv_res, path: Path) -> Document:
     doc = Document()
     dd = conv_res.document
 
-    # Text: prefer full-document markdown so we don't miss content (Docling's document.texts can under-represent)
+    # Text: use the richer source. Markdown can be sparse for layout-heavy PDFs (tables/lists);
+    # document.texts can under-represent for other docs. Prefer whichever has more prose.
+    texts_items = getattr(dd, "texts", []) or []
+    texts_combined_len = sum(
+        len(str((getattr(item, "text", None) or getattr(item, "orig", "") or "")).strip())
+        for item in texts_items
+    )
     full_md = None
     if hasattr(dd, "export_to_markdown") and callable(getattr(dd, "export_to_markdown")):
         try:
             full_md = dd.export_to_markdown()
         except Exception as e:
             logger.debug("Docling export_to_markdown failed: %s", e)
-    if full_md and isinstance(full_md, str) and full_md.strip():
-        doc.text_blocks.append(TextBlock(page=None, text=full_md.strip()))
+    full_md = (full_md and isinstance(full_md, str) and full_md.strip()) or None
+    # Use markdown only when it's clearly richer (avoids sparse markdown on table-heavy PDFs)
+    use_markdown = full_md and len(full_md) >= max(texts_combined_len, 400)
+    if use_markdown:
+        doc.text_blocks.append(TextBlock(page=None, text=full_md))
     else:
-        # Fallback: from document.texts
-        for item in getattr(dd, "texts", []) or []:
+        for item in texts_items:
             text = getattr(item, "text", None) or getattr(item, "orig", "") or ""
             if not (text and str(text).strip()):
                 continue
             page = _page_from_prov(item)
             doc.text_blocks.append(TextBlock(page=page, text=str(text).strip()))
+        # If we had no text items, use markdown anyway when available
+        if not doc.text_blocks and full_md:
+            doc.text_blocks.append(TextBlock(page=None, text=full_md))
 
     # Tables
     for idx, item in enumerate(getattr(dd, "tables", []) or []):
@@ -61,6 +72,11 @@ def _docling_to_document(conv_res, path: Path) -> Document:
                 data = df.fillna("").astype(str).values.tolist()
                 if data:
                     doc.table_regions.append(TableRegion(page=page, data=data))
+                    # Also add table cell text as prose so protocol names/lists are searchable (not just the LLM summary)
+                    table_text_lines = [" ".join(str(c or "").strip() for c in row if (c or "").strip()) for row in data]
+                    table_text = "\n".join(ln for ln in table_text_lines if ln)
+                    if len(table_text) > 80:
+                        doc.text_blocks.append(TextBlock(page=page, text=table_text))
         except Exception as e:
             logger.debug("Docling table export failed for table %s: %s", idx, e)
 
@@ -146,4 +162,10 @@ def extract_document_with_docling(path: Path) -> Document | None:
     doc = _docling_to_document(conv_res, path)
     if not doc.has_embeddable():
         return None
+    # For PDFs, if Docling produced very little prose, fall back to legacy (PyMuPDF) for better coverage
+    if suffix in config.PDF_EXT:
+        prose_len = sum(len(blk.text) for blk in doc.text_blocks)
+        if prose_len < 500:
+            logger.info("Docling produced sparse prose for PDF (%d chars), falling back to legacy: %s", prose_len, path.name)
+            return None
     return doc
