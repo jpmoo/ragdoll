@@ -1,9 +1,6 @@
 """LLM interpreters for charts and tables. Produce qualitative summaries only; no numeric guessing. Anti-hallucination."""
 
-import json
 import logging
-import re
-from typing import Any
 
 from . import config
 from .action_log import log as action_log
@@ -16,7 +13,8 @@ AUTH = (
 )
 
 
-def _ollama_json(prompt: str, model: str, group: str = "_root", timeout: int | None = None) -> dict[str, Any] | None:
+def _ollama_text(prompt: str, model: str, group: str = "_root", timeout: int | None = None) -> str | None:
+    """Call Ollama and return raw response text (no JSON required). Returns None on request failure."""
     timeout = timeout or config.CHUNK_LLM_TIMEOUT
     url = (config.OLLAMA_HOST or "").rstrip("/")
     try:
@@ -24,16 +22,11 @@ def _ollama_json(prompt: str, model: str, group: str = "_root", timeout: int | N
 
         r = requests.post(
             f"{url}/api/generate",
-            json={"model": model, "prompt": prompt, "stream": False, "format": "json"},
+            json={"model": model, "prompt": prompt, "stream": False},
             timeout=timeout,
         )
         r.raise_for_status()
-        resp = (r.json().get("response") or "").strip()
-        if "```" in resp:
-            m = re.search(r"```(?:json)?\s*([\s\S]*?)```", resp)
-            if m:
-                resp = m.group(1).strip()
-        return json.loads(resp)
+        return (r.json().get("response") or "").strip() or None
     except Exception as e:
         logger.warning("Ollama interpret request failed: %s", e)
         return None
@@ -47,20 +40,20 @@ def interpret_chart(ocr_text: str, group: str = "_root", filename: str | None = 
     model = config.INTERPRET_MODEL
     filename_context = f"Source filename: {filename}\n\n" if filename else ""
     prompt = (
-        "You are summarizing a chart or graph for a RAG system. Use ONLY the OCR text from the chart (titles, axis labels, legends, annotations).\n"
+        "You are summarizing a chart or graph. Use ONLY the OCR text from the chart (titles, axis labels, legends, annotations).\n"
         f"{filename_context}"
         "Output a short qualitative summary: what is being compared, major trends, outliers, and any annotations. "
         "Include relevant context from the filename if it provides useful information. "
-        "Do NOT guess or invent specific numbers from bars or lines. Do not include 'RAG' or 'RAG system' in your summary. "
+        "Do NOT guess or invent specific numbers from bars or lines. "
         f"{AUTH}\n\n"
-        "Return valid JSON: {\"summary\": \"your summary here\"}\n\n"
+        "Reply with only your summary, no JSON and no preamble.\n\n"
         "OCR text:\n"
     ) + (ocr_text.strip() or "(no text detected)")
 
-    obj = _ollama_json(prompt, model, group)
-    if isinstance(obj, dict) and isinstance(obj.get("summary"), str) and obj["summary"].strip():
+    summary = _ollama_text(prompt, model, group)
+    if summary:
         action_log("interpret_chart", model=model, group=group)
-        return obj["summary"].strip()
+        return summary
     fallback = f"Chart: {ocr_text[:500].strip() or 'no OCR text'}." if ocr_text else "Chart: no OCR text."
     action_log("interpret_chart", model=model, fallback=True, group=group)
     return fallback
@@ -75,22 +68,19 @@ def interpret_figure(ocr_text: str, group: str = "_root", filename: str | None =
     model = config.INTERPRET_MODEL
     filename_context = f"Source filename: {filename}\n\n" if filename else ""
     prompt = (
-        "You are analyzing a figure or process diagram for a RAG system. Use ONLY the OCR text from the diagram.\n"
+        "You are analyzing a figure or process diagram. Use ONLY the OCR text from the diagram.\n"
         f"{filename_context}"
         "Infer: steps, decisions (with conditions), actors, and end states. If order or branching is unclear, state the uncertainty. "
         "Include relevant context from the filename if it provides useful information. "
-        "Do not include 'RAG' or 'RAG system' in your summary. "
         f"{AUTH}\n\n"
-        'Return valid JSON: {"summary": "natural-language process summary", "steps": ["step1", ...], "decisions": [{"label": "...", "condition": "..."}], "actors": [], "end_states": []}\n\n'
+        "Reply with only your process summary, no JSON and no preamble.\n\n"
         "OCR text:\n"
     ) + (ocr_text.strip() or "(no text detected)")
 
-    obj = _ollama_json(prompt, model, group)
-    if isinstance(obj, dict) and obj.get("summary"):
-        summary = str(obj["summary"]).strip()
-        process = {k: obj[k] for k in ("steps", "decisions", "actors", "end_states") if k in obj}
+    summary = _ollama_text(prompt, model, group)
+    if summary:
         action_log("interpret_figure", model=model, group=group)
-        return summary, process
+        return summary, {"steps": [], "decisions": [], "actors": [], "end_states": []}
     fallback = f"Figure: {ocr_text[:500].strip() or 'no OCR text'}." if ocr_text else "Figure: no OCR text."
     action_log("interpret_figure", model=model, fallback=True, group=group)
     return fallback, {"steps": [], "decisions": [], "actors": [], "end_states": []}
@@ -110,20 +100,20 @@ def interpret_table(table_data: list[list[str]], group: str = "_root", filename:
 
     filename_context = f"Source filename: {filename}\n\n" if filename else ""
     prompt = (
-        "You are summarizing a table for a RAG system. Use only the provided cells.\n"
+        "You are summarizing a table. Use only the provided cells.\n"
         f"{filename_context}"
         "Output: purpose of the table, main metrics, key comparisons or rankings, and any trends or notes. "
         "Include relevant context from the filename if it provides useful information. "
-        "Do not invent or guess values that are not in the table. Do not include 'RAG' or 'RAG system' in your summary. "
+        "Do not invent or guess values that are not in the table. "
         f"{AUTH}\n\n"
-        "Return valid JSON: {\"summary\": \"your summary here\"}\n\n"
+        "Reply with only your summary, no JSON and no preamble.\n\n"
         "Table (tab-separated):\n"
     ) + tbl
 
-    obj = _ollama_json(prompt, model, group)
-    if isinstance(obj, dict) and isinstance(obj.get("summary"), str) and obj["summary"].strip():
+    summary = _ollama_text(prompt, model, group)
+    if summary:
         action_log("interpret_table", model=model, rows=len(table_data), group=group)
-        return obj["summary"].strip()
+        return summary
     fallback = "Table: " + (tbl[:400].replace("\n", " ") or "empty")
     action_log("interpret_table", model=model, fallback=True, group=group)
     return fallback
