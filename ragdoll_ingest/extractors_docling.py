@@ -20,12 +20,17 @@ DOCLING_EXT = config.PDF_EXT | config.WORD_EXT | config.EXCEL_EXT | {".pptx"} | 
 
 
 def _page_from_prov(item) -> int | None:
-    """Get page number from a Docling item's provenance, if any."""
+    """Get page number from a Docling item's provenance, if any. Normalized to 1-based (file page numbers)."""
     prov = getattr(item, "prov", None) or []
     if prov and len(prov) > 0:
         p = prov[0]
-        return getattr(p, "page_no", None)
-    return getattr(item, "page_no", None)
+        page = getattr(p, "page_no", None) or getattr(p, "page_number", None)
+    else:
+        page = getattr(item, "page_no", None) or getattr(item, "page_number", None)
+    if page is not None and isinstance(page, int):
+        # Normalize to 1-based so samples match PDF viewer page numbers
+        return max(1, page)
+    return page
 
 
 def _docling_to_document(conv_res, path: Path) -> Document:

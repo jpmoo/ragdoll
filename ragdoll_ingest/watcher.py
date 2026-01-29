@@ -142,12 +142,32 @@ def _process_one(fpath: Path) -> None:
         if doc and doc.has_embeddable():
             # Structured: prose -> chunk; charts -> OCR + interpret + store; tables -> interpret + store. Embed summaries only.
             if config.SEMANTIC_CHUNKING and doc.text_blocks:
-                # Combine all text, clean per block (so offset_to_page matches cleaned string), ask LLM for semantic boundaries
-                cleaned_parts = [_clean_for_chunking(blk.text) for blk in doc.text_blocks]
+                # Ensure page mapping matches the original document: sort blocks by page so the
+                # concatenated string is in file page order (page 1, then page 2, ...). Then
+                # offset_to_page maps each character offset to the correct file page.
+                _PAGE_SENTINEL = 99999  # blocks with no page go after known pages
+                sorted_blocks = sorted(
+                    enumerate(doc.text_blocks),
+                    key=lambda ix_blk: (
+                        ix_blk[1].page if ix_blk[1].page is not None else _PAGE_SENTINEL,
+                        ix_blk[0],
+                    ),
+                )
+                cleaned_parts = [_clean_for_chunking(blk.text) for _, blk in sorted_blocks]
                 cleaned = "\n\n".join(cleaned_parts)
-                offset_to_page: list[tuple[int, int | None]] = [(0, doc.text_blocks[0].page)]
-                for i in range(1, len(doc.text_blocks)):
-                    offset_to_page.append((offset_to_page[-1][0] + len(cleaned_parts[i - 1]) + 2, doc.text_blocks[i].page))
+                offset_to_page = [(0, sorted_blocks[0][1].page)]
+                for i in range(1, len(sorted_blocks)):
+                    offset_to_page.append(
+                        (offset_to_page[-1][0] + len(cleaned_parts[i - 1]) + 2, sorted_blocks[i][1].page)
+                    )
+                # Fill None pages so every offset maps to a file page (1-based)
+                fill_page = 1
+                new_otp: list[tuple[int, int | None]] = []
+                for off, p in offset_to_page:
+                    if p is not None:
+                        fill_page = p
+                    new_otp.append((off, fill_page))
+                offset_to_page = new_otp
                 semantic_chunks = chunk_text_semantic(cleaned, group=group, pre_cleaned=True)
                 for chunk_str, start_offset in semantic_chunks:
                     page = _page_for_offset(offset_to_page, start_offset)
