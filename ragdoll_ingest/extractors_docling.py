@@ -33,13 +33,23 @@ def _docling_to_document(conv_res, path: Path) -> Document:
     doc = Document()
     dd = conv_res.document
 
-    # Text: from document.texts
-    for item in getattr(dd, "texts", []) or []:
-        text = getattr(item, "text", None) or getattr(item, "orig", "") or ""
-        if not (text and str(text).strip()):
-            continue
-        page = _page_from_prov(item)
-        doc.text_blocks.append(TextBlock(page=page, text=str(text).strip()))
+    # Text: prefer full-document markdown so we don't miss content (Docling's document.texts can under-represent)
+    full_md = None
+    if hasattr(dd, "export_to_markdown") and callable(getattr(dd, "export_to_markdown")):
+        try:
+            full_md = dd.export_to_markdown()
+        except Exception as e:
+            logger.debug("Docling export_to_markdown failed: %s", e)
+    if full_md and isinstance(full_md, str) and full_md.strip():
+        doc.text_blocks.append(TextBlock(page=None, text=full_md.strip()))
+    else:
+        # Fallback: from document.texts
+        for item in getattr(dd, "texts", []) or []:
+            text = getattr(item, "text", None) or getattr(item, "orig", "") or ""
+            if not (text and str(text).strip()):
+                continue
+            page = _page_from_prov(item)
+            doc.text_blocks.append(TextBlock(page=page, text=str(text).strip()))
 
     # Tables
     for idx, item in enumerate(getattr(dd, "tables", []) or []):

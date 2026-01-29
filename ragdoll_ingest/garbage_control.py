@@ -264,12 +264,14 @@ def filter_chunks(
             rejected_count += 1
             continue
         
-        # Stage 2: Deterministic scoring
-        score = stage2_deterministic_scoring(chunk)
-        if score < config.GARBAGE_MIN_SCORE:
-            _log_garbage(chunk, f"low_score_{score:.2f}", "stage2", group, source_path)
-            rejected_count += 1
-            continue
+        # Stage 2: Deterministic scoring (skip for plain text chunks to avoid dropping technical/list content)
+        artifact_type = chunk.get("artifact_type", "text")
+        if artifact_type != "text":
+            score = stage2_deterministic_scoring(chunk)
+            if score < config.GARBAGE_MIN_SCORE:
+                _log_garbage(chunk, f"low_score_{score:.2f}", "stage2", group, source_path)
+                rejected_count += 1
+                continue
         
         # Stage 3: Optional LLM validation
         if not _llm_validate(chunk, group):

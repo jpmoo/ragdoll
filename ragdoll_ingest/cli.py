@@ -6,7 +6,15 @@ import sys
 from pathlib import Path
 
 from . import config
-from .storage import _connect, _list_sync_groups, delete_source_by_id, get_source_by_id, init_db, list_sources
+from .storage import (
+    _connect,
+    _list_sync_groups,
+    delete_source_by_id,
+    get_source_by_id,
+    init_db,
+    list_sources,
+    unmark_processed,
+)
 
 
 def cmd_collections(args: argparse.Namespace) -> int:
@@ -109,6 +117,9 @@ def cmd_delete(args: argparse.Namespace) -> int:
         conn.commit()
         
         if deleted > 0:
+            # Unmark from processed list so the file can be re-ingested if put back in ingest
+            source_filename = Path(source_path).name
+            unmark_processed(source_filename, group)
             # Move source file to deleted folder
             gp = config.get_group_paths(group)
             source_file = Path(source_path)
@@ -131,12 +142,36 @@ def cmd_delete(args: argparse.Namespace) -> int:
             else:
                 print(f"Deleted {deleted} chunk{'s' if deleted != 1 else ''} from source ID {source_id} ({source_path}) in collection '{group}'.")
                 print(f"Note: Source file not found at {source_path}, may have been already moved or deleted.")
+            print("Removed from processed list; put the file back in the ingest folder to re-ingest (restart ingest service if it was running).")
             return 0
         else:
             print(f"No chunks found for source ID {source_id} in collection '{group}'.", file=sys.stderr)
             return 1
     finally:
         conn.close()
+
+
+def cmd_reprocess(args: argparse.Namespace) -> int:
+    """Unmark a file so it will be re-ingested when put back in the ingest folder."""
+    group = args.collection
+    match = args.path_or_filename.strip()
+    if not match:
+        print("Error: path or filename is required.", file=sys.stderr)
+        return 1
+    collections = _list_sync_groups()
+    if group not in collections:
+        print(f"Error: Collection '{group}' not found.", file=sys.stderr)
+        print(f"Available collections: {', '.join(sorted(collections))}", file=sys.stderr)
+        return 1
+    removed = unmark_processed(match, group)
+    if removed > 0:
+        print(f"Unmarked {removed} processed record(s) for '{match}' in collection '{group}'.")
+        print("Restart the ingest service so it reloads the processed list, then the file in the ingest folder will be re-ingested:")
+        print("  sudo systemctl restart ragdoll-ingest")
+        return 0
+    print(f"No processed record found for '{match}' in collection '{group}'.", file=sys.stderr)
+    print("Use the full ingest path or just the filename (e.g. 'Issue Briefing - Key PLC Protocols.pdf').", file=sys.stderr)
+    return 1
 
 
 def main() -> int:
@@ -185,6 +220,21 @@ def main() -> int:
         help="Skip confirmation prompt"
     )
     
+    # reprocess command
+    reprocess_parser = subparsers.add_parser(
+        "reprocess",
+        help="Unmark a file so it will be re-ingested",
+        description="Remove a file from the processed list so the watcher will ingest it again when it appears in the ingest folder. Use after deleting chunks and putting the file back. Pass full path or just the filename."
+    )
+    reprocess_parser.add_argument(
+        "collection",
+        help="Collection name (e.g. edleadership)"
+    )
+    reprocess_parser.add_argument(
+        "path_or_filename",
+        help="Full ingest path or filename (e.g. 'Issue Briefing - Key PLC Protocols.pdf')"
+    )
+    
     args = parser.parse_args()
     
     # Route to command handler
@@ -194,6 +244,8 @@ def main() -> int:
         return cmd_list(args)
     elif args.command == "delete":
         return cmd_delete(args)
+    elif args.command == "reprocess":
+        return cmd_reprocess(args)
     else:
         parser.print_help()
         return 1

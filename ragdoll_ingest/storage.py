@@ -161,6 +161,55 @@ def mark_processed(path: str, mtime: float, size: int, group: str) -> None:
     logger.debug("Marked processed: %s (group=%s)", path, group)
 
 
+def _processed_path_matches(stored_path: str, match: str) -> bool:
+    """True if stored_path should be considered a match for match (full path or filename)."""
+    if not match:
+        return False
+    if stored_path == match:
+        return True
+    # Match by filename (stored path ends with /filename or \filename)
+    return stored_path.endswith("/" + match) or stored_path.endswith("\\" + match)
+
+
+def unmark_processed(match: str, group: str) -> int:
+    """
+    Remove processed record(s) for a file so it will be re-ingested when seen again.
+    match: full ingest path or just the filename (e.g. "Issue Briefing - Key PLC Protocols.pdf").
+    Returns number of entries removed.
+    """
+    global _processed_cache
+    gp = config.get_group_paths(group)
+    gp.group_dir.mkdir(parents=True, exist_ok=True)
+    if not gp.processed_path.exists():
+        return 0
+    with open(gp.processed_path, "r", encoding="utf-8") as f:
+        lines = [ln.strip() for ln in f if ln.strip()]
+    kept: list[str] = []
+    removed = 0
+    for line in lines:
+        try:
+            rec = json.loads(line)
+            path = rec.get("path", "")
+            if _processed_path_matches(path, match):
+                removed += 1
+                continue
+        except (json.JSONDecodeError, TypeError):
+            pass
+        kept.append(line)
+    if removed > 0:
+        with open(gp.processed_path, "w", encoding="utf-8") as f:
+            for line in kept:
+                f.write(line + "\n")
+        with _processed_lock:
+            if group in _processed_cache:
+                _processed_cache[group] = {
+                    (p, m, s) for (p, m, s) in _processed_cache[group]
+                    if not _processed_path_matches(p, match)
+                }
+        logger.info("Unmarked %d processed record(s) for match=%s (group=%s)", removed, match, group)
+    return removed
+
+
 # --- DB (chunks, per group) ---
 
 def _connect(group: str) -> sqlite3.Connection:
