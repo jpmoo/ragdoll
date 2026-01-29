@@ -118,6 +118,8 @@ TARGET_CHUNK_TOKENS = int(get_env("RAGDOLL_TARGET_CHUNK_TOKENS") or "400")
 MAX_CHUNK_TOKENS = int(get_env("RAGDOLL_MAX_CHUNK_TOKENS") or "600")
 OVERLAP_SENTENCES = int(get_env("RAGDOLL_OVERLAP_SENTENCES") or "1")
 CHUNK_LLM_TIMEOUT = int(get_env("RAGDOLL_CHUNK_LLM_TIMEOUT") or "300")
+# Semantic chunking: when True, combine all text into one string, clean it, and ask LLM for character start/end indices per chunk
+SEMANTIC_CHUNKING = (get_env("RAGDOLL_SEMANTIC_CHUNKING") or "true").lower() in ("true", "1", "yes")
 
 # Supported extensions (lowercase)
 TEXT_EXT = {".txt", ".md", ".markdown"}

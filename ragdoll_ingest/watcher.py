@@ -13,7 +13,7 @@ from watchdog.observers import Observer
 from . import config
 from .action_log import log as action_log
 from .artifacts import store_chart_image, store_figure, store_table
-from .chunker import chunk_text
+from .chunker import _clean_for_chunking, chunk_text, chunk_text_semantic
 from .embedder import embed
 from .garbage_control import filter_chunks
 from .extractors import extract_document, extract_text, ocr_image_bytes
@@ -31,6 +31,19 @@ from .storage import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _page_for_offset(offset_to_page: list[tuple[int, int | None]], start_offset: int) -> int | None:
+    """Given (offset, page) pairs for segment starts, return page for character at start_offset."""
+    if not offset_to_page:
+        return None
+    page = offset_to_page[0][1]
+    for offset, p in offset_to_page:
+        if offset <= start_offset:
+            page = p
+        else:
+            break
+    return page
 
 
 def _is_supported(p: Path) -> bool:
@@ -129,9 +142,21 @@ def _process_one(fpath: Path) -> None:
         doc = extract_document(p)
         if doc and doc.has_embeddable():
             # Structured: prose -> chunk; charts -> OCR + interpret + store; tables -> interpret + store. Embed summaries only.
-            for blk in doc.text_blocks:
-                for c in chunk_text(blk.text, group=group):
-                    chunks_list.append({"text": c, "artifact_type": "text", "artifact_path": None, "page": blk.page})
+            if config.SEMANTIC_CHUNKING and doc.text_blocks:
+                # Combine all text, clean per block (so offset_to_page matches cleaned string), ask LLM for semantic boundaries
+                cleaned_parts = [_clean_for_chunking(blk.text) for blk in doc.text_blocks]
+                cleaned = "\n\n".join(cleaned_parts)
+                offset_to_page: list[tuple[int, int | None]] = [(0, doc.text_blocks[0].page)]
+                for i in range(1, len(doc.text_blocks)):
+                    offset_to_page.append((offset_to_page[-1][0] + len(cleaned_parts[i - 1]) + 2, doc.text_blocks[i].page))
+                semantic_chunks = chunk_text_semantic(cleaned, group=group, pre_cleaned=True)
+                for chunk_str, start_offset in semantic_chunks:
+                    page = _page_for_offset(offset_to_page, start_offset)
+                    chunks_list.append({"text": chunk_str, "artifact_type": "text", "artifact_path": None, "page": page})
+            else:
+                for blk in doc.text_blocks:
+                    for c in chunk_text(blk.text, group=group):
+                        chunks_list.append({"text": c, "artifact_type": "text", "artifact_path": None, "page": blk.page})
             for idx, cr in enumerate(doc.chart_regions):
                 ocr = ocr_image_bytes(cr.image_bytes)
                 summary = interpret_chart(ocr, group=group, filename=str(p.stem) if p.stem else None)
@@ -184,12 +209,20 @@ def _process_one(fpath: Path) -> None:
                     _move_to(p, root, config.FAILED_SUBDIR, group)
                     return
                 action_log("extract_ok", file=str(p), chars=len(text), group=group)
-                chunks = chunk_text(text, group=group)
-                if not chunks:
-                    action_log("chunk_empty", file=str(p), group=group)
-                    _move_to(p, root, config.FAILED_SUBDIR, group)
-                    return
-                chunks_list = [{"text": c, "artifact_type": "text", "artifact_path": None, "page": None} for c in chunks]
+                if config.SEMANTIC_CHUNKING:
+                    semantic_chunks = chunk_text_semantic(text, group=group)
+                    if not semantic_chunks:
+                        action_log("chunk_empty", file=str(p), group=group)
+                        _move_to(p, root, config.FAILED_SUBDIR, group)
+                        return
+                    chunks_list = [{"text": c, "artifact_type": "text", "artifact_path": None, "page": None} for c, _ in semantic_chunks]
+                else:
+                    chunks = chunk_text(text, group=group)
+                    if not chunks:
+                        action_log("chunk_empty", file=str(p), group=group)
+                        _move_to(p, root, config.FAILED_SUBDIR, group)
+                        return
+                    chunks_list = [{"text": c, "artifact_type": "text", "artifact_path": None, "page": None} for c in chunks]
     except Exception as e:
         action_log("extract_fail", file=str(p), error=str(e), group=group)
         logger.exception("Extract failed for %s: %s", p, e)

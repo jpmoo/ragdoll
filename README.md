@@ -61,6 +61,7 @@ Optional env vars:
 | `RAGDOLL_EMBED_MODEL` | `nomic-embed-text:latest` | Embedding model |
 | `RAGDOLL_CHUNK_MODEL` | `llama3.2:3b` | Model for semantic splitting of long paragraphs |
 | `RAGDOLL_INTERPRET_MODEL` | same as `RAGDOLL_CHUNK_MODEL` | Model for chart and table interpretation (qualitative summaries; anti-hallucination) |
+| `RAGDOLL_SEMANTIC_CHUNKING` | `true` | When `true`, combine all document text, strip links/formatting, and ask the LLM for character start/end indices of semantic chunks (then snap to sentence/paragraph). When `false`, use paragraph-based splitting and LLM only for long paragraphs. |
 | `RAGDOLL_TARGET_CHUNK_TOKENS` | `400` | Target size per chunk |
 | `RAGDOLL_MAX_CHUNK_TOKENS` | `600` | Max before LLM-assisted split |
 | `RAGDOLL_CHUNK_LLM_TIMEOUT` | `300` | Seconds to wait for Ollama (chunk split, chart/table interpret) |
@@ -113,6 +114,10 @@ python -m ragdoll_ingest
    sudo systemctl start ragdoll-ingest
    sudo journalctl -u ragdoll-ingest -f
    ```
+
+## Chunking
+
+With **`RAGDOLL_SEMANTIC_CHUNKING=true`** (default), document text is combined into one string, stripped of links and markdown formatting, and the LLM returns **character start/end indices** for each semantic chunk. Boundaries are snapped to sentence or paragraph so cuts are clean. Long documents are processed in windows (~10k chars per LLM call). Chunk text is exact slices of the cleaned string (no LLM rewriting). Set to `false` to use the previous behavior: paragraph-based splitting and LLM only for long paragraphs.
 
 ## Supported file types
 
@@ -318,7 +323,7 @@ A separate web service in `web/` lets you review **samples (chunks) side-by-side
 - **URL:** Open `http://localhost:9043` (or your host:9043) in a browser.
 
 **Features:**
-- Choose a **group** and **source**; the left panel shows the source document (PDF/image inline; other types open in a new tab). PDFs are **not** converted to scans—the file on disk is the original. The in-app PDF viewer overlays a **selectable text layer** so you can copy/paste.
+- Choose a **group** and **source**; the left panel shows the source document (PDF/image inline; other types open in a new tab). PDFs are **not** converted to scans—the file on disk is the original. PDFs open in the **browser’s native viewer** (iframe) so copy/paste works; use the “Page” filter and type the page number to see samples for that page.
 - The right panel lists **samples (chunks)** for that source. You can:
   - **View all samples** or filter by **page** (samples for the current source page).
   - **Edit** a sample (inline; saves and re-embeds).

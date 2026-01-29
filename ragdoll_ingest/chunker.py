@@ -13,6 +13,214 @@ logger = logging.getLogger(__name__)
 # Rough: ~4 chars per token for English
 CHARS_PER_TOKEN = 4
 
+# Max characters to send to LLM in one request for semantic boundary detection (leave room for prompt + response)
+SEMANTIC_CHUNK_WINDOW = 10000
+
+
+def _clean_for_chunking(text: str) -> str:
+    """Strip non-meaning-bearing characters: links, markdown formatting, normalize whitespace. Keeps substantive text."""
+    if not text or not text.strip():
+        return ""
+    # Replace markdown links [text](url) with just the link text
+    text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)
+    # Remove bare URLs (http/https)
+    text = re.sub(r"https?://\S+", " ", text)
+    # Remove **bold** and __bold__ (keep inner text)
+    text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
+    text = re.sub(r"__([^_]+)__", r"\1", text)
+    # Remove *italic* and _italic_ (keep inner text; avoid breaking mid-word)
+    text = re.sub(r"\*([^*]+)\*", r"\1", text)
+    text = re.sub(r"(?<!\w)_([^_]+)_(?!\w)", r"\1", text)
+    # Remove # at start of line (markdown headers) but keep the rest of the line
+    text = re.sub(r"^#+\s*", "", text, flags=re.MULTILINE)
+    # Normalize whitespace: collapse multiple spaces, normalize newlines to \n
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\r\n?", "\n", text)
+    text = re.sub(r"\n\s*\n\s*\n+", "\n\n", text)
+    return text.strip()
+
+
+def _snap_to_boundaries(text: str, start: int, end: int) -> tuple[int, int]:
+    """Snap start/end to paragraph or sentence boundaries so we don't cut mid-sentence."""
+    n = len(text)
+    if n == 0:
+        return 0, 0
+    start = max(0, min(start, n - 1))
+    end = max(start, min(end, n))
+    # Snap start backward to paragraph start (\n\n) or sentence start (after . or \n)
+    for i in range(start, -1, -1):
+        if i == 0:
+            break
+        if i >= 2 and text[i - 2 : i] == "\n\n":
+            start = i
+            break
+        if i >= 2 and text[i - 1] in " \t" and text[i - 2] in ".!?":
+            start = i
+            break
+        if text[i - 1] == "\n":
+            start = i
+            break
+    else:
+        start = 0
+    # Snap end forward to paragraph end or sentence end
+    for i in range(end, n + 1):
+        if i >= n:
+            end = n
+            break
+        if i <= n - 2 and text[i : i + 2] == "\n\n":
+            end = i + 2
+            break
+        if i < n and text[i] in ".!?" and (i + 1 >= n or text[i + 1] in " \t\n"):
+            end = i + 1
+            break
+        if i < n and text[i] == "\n":
+            end = i + 1
+            break
+    else:
+        end = n
+    return start, end
+
+
+def _get_semantic_chunk_indices_one(
+    window_text: str, ollama_url: str, group: str = "_root"
+) -> list[tuple[int, int]]:
+    """Ask LLM for character start/end indices of semantic chunks in this text. Returns list of (start, end)."""
+    prompt = (
+        "Given the following text, identify semantic chunk boundaries. "
+        "Each chunk should be a coherent semantic unit (e.g. a section, a few related paragraphs). "
+        "Return ONLY valid JSON with a single key 'chunks' whose value is an array of objects, each with 'start' and 'end' (0-based character indices). "
+        "Chunks must not overlap, must be in order, and must cover the whole text from 0 to the last character. "
+        "Example: {\"chunks\": [{\"start\": 0, \"end\": 420}, {\"start\": 421, \"end\": 890}]}\n\n"
+        "Text:\n\n"
+    ) + window_text
+
+    try:
+        import requests
+
+        r = requests.post(
+            f"{ollama_url.rstrip('/')}/api/generate",
+            json={
+                "model": config.CHUNK_MODEL,
+                "prompt": prompt,
+                "stream": False,
+                "format": "json",
+            },
+            timeout=config.CHUNK_LLM_TIMEOUT,
+        )
+        r.raise_for_status()
+        resp = (r.json().get("response") or "").strip()
+        if not resp:
+            return []
+        if "```" in resp:
+            m = re.search(r"```(?:json)?\s*([\s\S]*?)```", resp)
+            if m:
+                resp = m.group(1).strip()
+        obj: dict[str, Any] = json.loads(resp)
+        chunks_raw = obj.get("chunks")
+        if not isinstance(chunks_raw, list):
+            return []
+        n = len(window_text)
+        out: list[tuple[int, int]] = []
+        for item in chunks_raw:
+            if not isinstance(item, dict):
+                continue
+            s = item.get("start")
+            e = item.get("end")
+            if s is None or e is None:
+                continue
+            try:
+                start_i = int(s)
+                end_i = int(e)
+            except (TypeError, ValueError):
+                continue
+            if start_i < 0 or end_i <= start_i or end_i > n:
+                continue
+            out.append((start_i, end_i))
+        if not out:
+            return []
+        out.sort(key=lambda x: x[0])
+        # Merge overlapping and fill gaps
+        merged: list[tuple[int, int]] = [out[0]]
+        for a, b in out[1:]:
+            if a <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], b))
+            else:
+                merged.append((a, b))
+        action_log(
+            "chunk_semantic",
+            model=config.CHUNK_MODEL,
+            input_len=len(window_text),
+            num_chunks=len(merged),
+            group=group,
+        )
+        return merged
+    except Exception as e:
+        logger.warning("Semantic chunk indices request failed: %s", e)
+        return []
+
+
+def _get_semantic_chunk_indices(
+    full_text: str, ollama_url: str, group: str = "_root"
+) -> list[tuple[int, int]]:
+    """Get semantic chunk (start, end) indices for full text, using windowing if too long."""
+    if not full_text.strip():
+        return []
+    if len(full_text) <= SEMANTIC_CHUNK_WINDOW:
+        return _get_semantic_chunk_indices_one(full_text, ollama_url, group)
+    # Windowing: non-overlapping windows, chunk each independently
+    all_indices: list[tuple[int, int]] = []
+    offset = 0
+    while offset < len(full_text):
+        window = full_text[offset : offset + SEMANTIC_CHUNK_WINDOW]
+        if not window.strip():
+            offset += SEMANTIC_CHUNK_WINDOW
+            continue
+        indices = _get_semantic_chunk_indices_one(window, ollama_url, group)
+        for s, e in indices:
+            all_indices.append((offset + s, offset + e))
+        offset += SEMANTIC_CHUNK_WINDOW
+    all_indices.sort(key=lambda x: x[0])
+    return all_indices
+
+
+def chunk_text_semantic(
+    full_text: str,
+    ollama_url: str | None = None,
+    group: str = "_root",
+    pre_cleaned: bool = False,
+) -> list[tuple[str, int]]:
+    """
+    Clean full text (unless pre_cleaned=True), ask LLM for semantic chunk boundaries (start/end indices),
+    snap to paragraph/sentence boundaries, and return list of (chunk_string, start_offset).
+    Caller uses start_offset with offset_to_page (built in cleaned space) to get page for each chunk.
+    """
+    url = ollama_url or config.OLLAMA_HOST
+    cleaned = full_text if pre_cleaned else _clean_for_chunking(full_text)
+    if not cleaned.strip():
+        return []
+    indices = _get_semantic_chunk_indices(cleaned, url, group)
+    if not indices:
+        # Fallback: one chunk if short enough, else legacy chunk_text (start_offset 0 so page = first page)
+        if _tokens_approx(cleaned) <= config.MAX_CHUNK_TOKENS:
+            return [(cleaned, 0)]
+        legacy_chunks = chunk_text(cleaned, url, group)
+        if not legacy_chunks:
+            return [(cleaned.strip(), 0)] if cleaned.strip() else []
+        return [(c, 0) for c in legacy_chunks]
+    # Snap and slice
+    result: list[tuple[str, int]] = []
+    for start, end in indices:
+        start, end = _snap_to_boundaries(cleaned, start, end)
+        if start >= end:
+            continue
+        chunk_str = cleaned[start:end].strip()
+        if not chunk_str:
+            continue
+        result.append((chunk_str, start))
+    if not result:
+        return [(cleaned.strip(), 0)] if cleaned.strip() else []
+    return result
+
 
 def _tokens_approx(text: str) -> int:
     return max(1, len(text) // CHARS_PER_TOKEN)
