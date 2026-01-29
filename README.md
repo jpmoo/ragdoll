@@ -327,6 +327,11 @@ A separate web service in `web/` lets you review **samples (chunks) side-by-side
 
 The review app uses the same RAG DB and `sources/` as the ingest and API; edits and inserts update the SQLite chunks and re-run the embedder so search stays in sync.
 
+**Authentication (optional):**
+- **App-level HTTP Basic Auth:** Set both `RAGDOLL_REVIEW_USER` and `RAGDOLL_REVIEW_PASSWORD` in `env.ragdoll` (or the environment). The app will require HTTP Basic Auth for all routes (UI and API). Leave either unset for no auth.
+- **Server-inherited auth:** Run the app behind a reverse proxy (e.g. nginx or Apache) and add Basic Auth (or other auth) at the proxy. The app then receives requests only from the proxy; no env vars needed in the app.
+  - Example (nginx): `auth_basic "RAGDoll Review"; auth_basic_user_file /etc/nginx/.htpasswd;` in the `location` that proxies to `http://127.0.0.1:9043`.
+
 ### Troubleshooting API access
 
 If the API server isn't accessible from other machines on your network:

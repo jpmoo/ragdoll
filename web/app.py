@@ -1,13 +1,15 @@
 """Review web service: side-by-side source and samples (chunks), port 9043."""
 
-import json
+import base64
 import logging
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
 
 # Run from project root so ragdoll_ingest is on path
 from ragdoll_ingest import config
@@ -31,7 +33,45 @@ logger = logging.getLogger(__name__)
 REVIEW_PORT = 9043
 WEB_ROOT = Path(__file__).resolve().parent
 
+# Optional HTTP Basic Auth: set both to enable
+REVIEW_USER = get_env("RAGDOLL_REVIEW_USER") or ""
+REVIEW_PASSWORD = get_env("RAGDOLL_REVIEW_PASSWORD") or ""
+
+
+class BasicAuthMiddleware(BaseHTTPMiddleware):
+    """Require HTTP Basic Auth when REVIEW_USER and REVIEW_PASSWORD are set."""
+
+    async def dispatch(self, request: Request, call_next):
+        if not REVIEW_USER or not REVIEW_PASSWORD:
+            return await call_next(request)
+        auth = request.headers.get("Authorization")
+        if not auth or not auth.startswith("Basic "):
+            return Response(
+                status_code=401,
+                content="Authentication required",
+                headers={"WWW-Authenticate": 'Basic realm="RAGDoll Review"'},
+            )
+        try:
+            raw = base64.b64decode(auth[6:].strip()).decode("utf-8")
+            user, _, password = raw.partition(":")
+            if user != REVIEW_USER or password != REVIEW_PASSWORD:
+                return Response(
+                    status_code=401,
+                    content="Invalid credentials",
+                    headers={"WWW-Authenticate": 'Basic realm="RAGDoll Review"'},
+                )
+        except Exception:
+            return Response(
+                status_code=401,
+                content="Invalid Authorization header",
+                headers={"WWW-Authenticate": 'Basic realm="RAGDoll Review"'},
+            )
+        return await call_next(request)
+
+
 app = FastAPI(title="RAGDoll Review", version="1.0.0")
+if REVIEW_USER and REVIEW_PASSWORD:
+    app.add_middleware(BasicAuthMiddleware)
 
 
 # --- API ---
