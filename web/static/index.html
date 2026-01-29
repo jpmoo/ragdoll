@@ -127,7 +127,29 @@
       align-items: flex-start;
       padding: 0.5rem;
     }
-    .pdf-canvas-wrap canvas { max-width: 100%; height: auto; }
+    .pdf-page {
+      position: relative;
+      display: inline-block;
+    }
+    .pdf-page canvas { display: block; max-width: 100%; height: auto; }
+    .pdf-text-layer {
+      position: absolute;
+      left: 0;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      overflow: hidden;
+      line-height: 1;
+      pointer-events: none;
+    }
+    .pdf-text-layer span {
+      color: transparent;
+      position: absolute;
+      white-space: pre;
+      cursor: text;
+      pointer-events: auto;
+      transform-origin: 0% 0%;
+    }
     .samples-toolbar {
       padding: 0.5rem 1rem;
       background: var(--surface);
@@ -224,7 +246,12 @@
             <span class="page-info" id="pdfPageInfo">Page 1 of 1</span>
             <button type="button" id="pdfNext" aria-label="Next page">Next</button>
           </div>
-          <div class="pdf-canvas-wrap"><canvas id="pdfCanvas"></canvas></div>
+          <div class="pdf-canvas-wrap">
+            <div class="pdf-page" id="pdfPage">
+              <canvas id="pdfCanvas"></canvas>
+              <div class="pdf-text-layer" id="pdfTextLayer" aria-hidden="true"></div>
+            </div>
+          </div>
         </div>
       </div>
     </section>
@@ -381,7 +408,27 @@
         const ctx = canvas.getContext('2d');
         canvas.height = viewport.height;
         canvas.width = viewport.width;
-        page.render({ canvasContext: ctx, viewport: viewport });
+        const pageWrap = qs('#pdfPage');
+        const textLayer = qs('#pdfTextLayer');
+        pageWrap.style.width = viewport.width + 'px';
+        pageWrap.style.height = viewport.height + 'px';
+        textLayer.style.width = viewport.width + 'px';
+        textLayer.style.height = viewport.height + 'px';
+        textLayer.innerHTML = '';
+        page.render({ canvasContext: ctx, viewport: viewport }).then(function() {
+          return page.getTextContent();
+        }).then(function(textContent) {
+          textContent.items.forEach(function(item) {
+            var tx = item.transform;
+            var span = document.createElement('span');
+            span.textContent = item.str;
+            span.style.left = (tx[4] * scale) + 'px';
+            span.style.top = (viewport.height - tx[5] * scale) + 'px';
+            span.style.fontSize = ((item.height || 12) * scale) + 'px';
+            span.style.fontFamily = (item.fontName && item.fontName.name) ? item.fontName.name : 'sans-serif';
+            textLayer.appendChild(span);
+          });
+        }).catch(function() { /* no text content or render failed */ });
       });
       if (qs('input[name="filter"]:checked').value === 'page') {
         loadChunks();

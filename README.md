@@ -318,7 +318,7 @@ A separate web service in `web/` lets you review **samples (chunks) side-by-side
 - **URL:** Open `http://localhost:9043` (or your host:9043) in a browser.
 
 **Features:**
-- Choose a **group** and **source**; the left panel shows the source document (PDF/image inline; other types open in a new tab).
+- Choose a **group** and **source**; the left panel shows the source document (PDF/image inline; other types open in a new tab). PDFs are **not** converted to scans—the file on disk is the original. The in-app PDF viewer overlays a **selectable text layer** so you can copy/paste.
 - The right panel lists **samples (chunks)** for that source. You can:
   - **View all samples** or filter by **page** (samples for the current source page).
   - **Edit** a sample (inline; saves and re-embeds).
