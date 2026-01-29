@@ -1,0 +1,28 @@
+[Unit]
+Description=RAGDoll Review: web UI for reviewing samples side-by-side with source (port 9043)
+After=network-online.target ollama.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Load environment from env.ragdoll or /etc/default/ragdoll-ingest
+EnvironmentFile=-/opt/ragdoll/env.ragdoll
+EnvironmentFile=-/etc/default/ragdoll-ingest
+# Override via: systemctl edit ragdoll-web
+#   [Service]
+#   Environment="RAGDOLL_REVIEW_PORT=9043"
+#   User=myuser
+#   Group=myuser
+#   WorkingDirectory=/opt/ragdoll
+#   ExecStart=/opt/ragdoll/.venv/bin/python run_web.py
+
+WorkingDirectory=/opt/ragdoll
+ExecStart=/opt/ragdoll/.venv/bin/python run_web.py
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ragdoll-web
+
+[Install]
+WantedBy=multi-user.target

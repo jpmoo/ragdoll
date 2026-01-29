@@ -14,7 +14,7 @@ AUTH = (
 
 
 def _ollama_text(prompt: str, model: str, group: str = "_root", timeout: int | None = None) -> str | None:
-    """Call Ollama and return raw response text (no JSON required). Returns None on request failure."""
+    """Call Ollama and return raw response text (no JSON required). Returns None on request failure or empty response."""
     timeout = timeout or config.CHUNK_LLM_TIMEOUT
     url = (config.OLLAMA_HOST or "").rstrip("/")
     try:
@@ -26,7 +26,10 @@ def _ollama_text(prompt: str, model: str, group: str = "_root", timeout: int | N
             timeout=timeout,
         )
         r.raise_for_status()
-        return (r.json().get("response") or "").strip() or None
+        out = (r.json().get("response") or "").strip() or None
+        if out is None:
+            logger.info("Ollama returned empty or whitespace-only response (model=%s)", model)
+        return out
     except Exception as e:
         logger.warning("Ollama interpret request failed: %s", e)
         return None

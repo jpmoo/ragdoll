@@ -233,6 +233,14 @@ sudo systemctl enable --now ragdoll-api
 
 The API server listens on port `9042` by default (configurable via `RAGDOLL_API_PORT`).
 
+**All three services (ingest, API, review web)** can be installed together so they start on boot and listen on their ports:
+
+```bash
+sudo cp ragdoll-ingest.service ragdoll-api.service ragdoll-web.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now ragdoll-ingest ragdoll-api ragdoll-web
+```
+
 ### Endpoints
 
 **`GET /rags`** — List all RAG collections (groups)
@@ -289,6 +297,35 @@ Response includes:
 - `threshold`: Used threshold
 - `count`: Number of results
 - `results`: Array of matching chunks (sorted by similarity, highest first), each with: `group`, `source_path`, `source_name`, `source_type`, `chunk_index`, `text`, `artifact_type`, `artifact_path`, `page`, `similarity`
+
+## Review web app
+
+A separate web service in `web/` lets you review **samples (chunks) side-by-side with their source** and edit them.
+
+- **Port:** `9043` (configurable via `RAGDOLL_REVIEW_PORT`), bound to `0.0.0.0` so it’s reachable on the network.
+- **Run manually:** From the project root:
+  ```bash
+  python run_web.py
+  # or: python -m uvicorn web.app:app --host 0.0.0.0 --port 9043
+  ```
+- **Run as a service (starts with ingest/API and on reboot):**
+  ```bash
+  sudo cp ragdoll-web.service /etc/systemd/system/
+  sudo systemctl daemon-reload
+  sudo systemctl enable --now ragdoll-web
+  ```
+  The unit uses the same env files as the API (`/opt/ragdoll/env.ragdoll`, `/etc/default/ragdoll-ingest`) and the same venv at `/opt/ragdoll/.venv/bin/python`. Override with `systemctl edit ragdoll-web` if needed.
+- **URL:** Open `http://localhost:9043` (or your host:9043) in a browser.
+
+**Features:**
+- Choose a **group** and **source**; the left panel shows the source document (PDF/image inline; other types open in a new tab).
+- The right panel lists **samples (chunks)** for that source. You can:
+  - **View all samples** or filter by **page** (samples for the current source page).
+  - **Edit** a sample (inline; saves and re-embeds).
+  - **Insert above** / **Insert below** (new sample at that index; re-embeds).
+  - **Delete** a sample.
+
+The review app uses the same RAG DB and `sources/` as the ingest and API; edits and inserts update the SQLite chunks and re-run the embedder so search stays in sync.
 
 ### Troubleshooting API access
 

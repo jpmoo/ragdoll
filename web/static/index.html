@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RAGDoll Review – Source &amp; Samples</title>
+  <style>
+    :root {
+      --bg: #0f0f12;
+      --surface: #18181c;
+      --border: #2a2a30;
+      --text: #e4e4e7;
+      --muted: #71717a;
+      --accent: #a78bfa;
+      --accent-hover: #c4b5fd;
+      --danger: #f87171;
+      --danger-hover: #fca5a5;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "DM Sans", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      line-height: 1.5;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: auto 1fr;
+      height: 100vh;
+      gap: 0;
+    }
+    @media (max-width: 900px) {
+      .layout { grid-template-columns: 1fr; grid-template-rows: auto auto 1fr; }
+    }
+    header {
+      grid-column: 1 / -1;
+      padding: 0.75rem 1rem;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+    header h1 { margin: 0; font-size: 1.1rem; font-weight: 600; }
+    header select, header input, header button {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 0.4rem 0.6rem;
+      border-radius: 6px;
+      font-size: 0.9rem;
+    }
+    header select { min-width: 120px; }
+    header input[type="number"] { width: 4rem; }
+    header button {
+      cursor: pointer;
+      background: var(--accent);
+      color: var(--bg);
+      border: none;
+    }
+    header button:hover { background: var(--accent-hover); }
+    .panel {
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid var(--border);
+      min-height: 0;
+    }
+    .panel:last-of-type { border-right: none; }
+    .panel-title {
+      padding: 0.5rem 1rem;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--muted);
+    }
+    .source-view {
+      flex: 1;
+      min-height: 200px;
+      background: var(--bg);
+    }
+    .source-view iframe {
+      width: 100%;
+      height: 100%;
+      border: none;
+    }
+    .source-view .placeholder {
+      padding: 2rem;
+      text-align: center;
+      color: var(--muted);
+    }
+    .samples-toolbar {
+      padding: 0.5rem 1rem;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+    .samples-toolbar label { display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; color: var(--muted); }
+    .samples-toolbar input[type="number"] { width: 4rem; padding: 0.3rem 0.5rem; border-radius: 4px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+    .samples-list {
+      flex: 1;
+      overflow: auto;
+      padding: 0.5rem;
+    }
+    .sample-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.75rem 1rem;
+      margin-bottom: 0.5rem;
+      position: relative;
+    }
+    .sample-card .meta { font-size: 0.75rem; color: var(--muted); margin-bottom: 0.4rem; }
+    .sample-card .text { white-space: pre-wrap; word-break: break-word; }
+    .sample-card .text.editing { font-style: italic; }
+    .sample-card textarea {
+      width: 100%;
+      min-height: 80px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 0.5rem;
+      border-radius: 4px;
+      font: inherit;
+      resize: vertical;
+    }
+    .sample-actions {
+      margin-top: 0.5rem;
+      display: flex;
+      gap: 0.4rem;
+      flex-wrap: wrap;
+    }
+    .sample-actions button {
+      font-size: 0.75rem;
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+      cursor: pointer;
+    }
+    .sample-actions button:hover { background: var(--border); }
+    .sample-actions button.danger { border-color: var(--danger); color: var(--danger); }
+    .sample-actions button.danger:hover { background: var(--danger); color: var(--bg); }
+    .sample-actions button.primary { background: var(--accent); color: var(--bg); border: none; }
+    .sample-actions button.primary:hover { background: var(--accent-hover); }
+    .empty-state { padding: 2rem; text-align: center; color: var(--muted); }
+    .toast {
+      position: fixed;
+      bottom: 1rem;
+      right: 1rem;
+      padding: 0.5rem 1rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 0.9rem;
+      z-index: 100;
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <header>
+      <h1>RAGDoll Review</h1>
+      <select id="groupSelect" aria-label="Group">
+        <option value="">Select group…</option>
+      </select>
+      <select id="sourceSelect" aria-label="Source" disabled>
+        <option value="">Select source…</option>
+      </select>
+      <a id="openSource" href="#" target="_blank" rel="noopener" style="color: var(--accent); font-size: 0.9rem;">Open in new tab</a>
+    </header>
+
+    <section class="panel">
+      <div class="panel-title">Source</div>
+      <div class="source-view">
+        <div class="placeholder" id="sourcePlaceholder">Select a group and source to view the document.</div>
+        <iframe id="sourceFrame" title="Source document" style="display: none;"></iframe>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title">Samples (chunks)</div>
+      <div class="samples-toolbar">
+        <label><input type="radio" name="filter" value="all" checked> All samples</label>
+        <label><input type="radio" name="filter" value="page"> Page <input type="number" id="pageNum" min="1" value="1" aria-label="Page number"></label>
+      </div>
+      <div class="samples-list" id="samplesList">
+        <div class="empty-state">Select a source to list samples.</div>
+      </div>
+    </section>
+  </div>
+
+  <div id="toast" class="toast" style="display: none;" role="status"></div>
+
+  <script>
+    const API = '/api';
+    let state = { group: '', sourceId: null, source: null, chunks: [] };
+
+    function qs(sel, el = document) { return el.querySelector(sel); }
+    function qsAll(sel, el = document) { return el.querySelectorAll(sel); }
+
+    function toast(msg) {
+      const el = qs('#toast');
+      el.textContent = msg;
+      el.style.display = 'block';
+      clearTimeout(el._t);
+      el._t = setTimeout(() => { el.style.display = 'none'; }, 3000);
+    }
+
+    async function fetchJson(path) {
+      const r = await fetch(API + path);
+      if (!r.ok) throw new Error(r.statusText || r.status);
+      return r.json();
+    }
+
+    async function loadGroups() {
+      const { groups } = await fetchJson('/groups');
+      const sel = qs('#groupSelect');
+      sel.innerHTML = '<option value="">Select group…</option>' + groups.map(g => `<option value="${g}">${g}</option>`).join('');
+    }
+
+    async function loadSources() {
+      if (!state.group) return;
+      const { sources } = await fetchJson(`/groups/${encodeURIComponent(state.group)}/sources`);
+      const sel = qs('#sourceSelect');
+      sel.disabled = false;
+      sel.innerHTML = '<option value="">Select source…</option>' + sources.map(s =>
+        `<option value="${s.source_id}" data-fetch-path="${(s.fetch_path || '').replace(/"/g, '&quot;')}">${s.display_name || s.source_id} (${s.chunk_count})</option>`
+      ).join('');
+      state.sourceId = null;
+      state.source = null;
+      renderSource();
+      renderChunks();
+    }
+
+    function onGroupChange() {
+      state.group = qs('#groupSelect').value || '';
+      qs('#sourceSelect').disabled = !state.group;
+      qs('#sourceSelect').innerHTML = '<option value="">Select source…</option>';
+      state.sourceId = null;
+      state.source = null;
+      if (state.group) loadSources();
+      else { renderSource(); renderChunks(); }
+    }
+
+    function onSourceChange() {
+      const sel = qs('#sourceSelect');
+      const opt = sel.selectedOptions[0];
+      state.sourceId = opt ? parseInt(opt.value, 10) : null;
+      state.source = opt ? { fetch_path: opt.dataset.fetchPath } : null;
+      renderSource();
+      loadChunks();
+    }
+
+    function renderSource() {
+      const ph = qs('#sourcePlaceholder');
+      const frame = qs('#sourceFrame');
+      const link = qs('#openSource');
+      if (!state.group || !state.source) {
+        ph.style.display = 'block';
+        frame.style.display = 'none';
+        link.href = '#';
+        link.style.display = 'none';
+        return;
+      }
+      const path = state.source.fetch_path;
+      if (!path) {
+        ph.textContent = 'No preview path for this source.';
+        ph.style.display = 'block';
+        frame.style.display = 'none';
+        link.href = '#';
+        link.style.display = 'none';
+        return;
+      }
+      const url = `${API}/groups/${encodeURIComponent(state.group)}/fetch/${path.split('/').map(encodeURIComponent).join('/')}`;
+      link.href = url;
+      link.style.display = 'inline';
+      const ext = (path.split('.').pop() || '').toLowerCase();
+      if (['pdf', 'png', 'jpg', 'jpeg', 'gif'].includes(ext)) {
+        frame.src = url;
+        frame.style.display = 'block';
+        ph.style.display = 'none';
+      } else {
+        frame.style.display = 'none';
+        ph.innerHTML = `Preview not available. <a href="${url}" target="_blank" rel="noopener">Open in new tab</a>`;
+        ph.style.display = 'block';
+      }
+    }
+
+    async function loadChunks() {
+      if (!state.group || state.sourceId == null) {
+        state.chunks = [];
+        renderChunks();
+        return;
+      }
+      const filter = qs('input[name="filter"]:checked').value;
+      const pageNum = filter === 'page' ? parseInt(qs('#pageNum').value, 10) : null;
+      const path = `/groups/${encodeURIComponent(state.group)}/sources/${state.sourceId}/chunks` + (pageNum != null && pageNum >= 1 ? `?page=${pageNum}` : '');
+      try {
+        const { chunks } = await fetchJson(path);
+        state.chunks = chunks || [];
+      } catch (e) {
+        state.chunks = [];
+        toast('Failed to load samples: ' + e.message);
+      }
+      renderChunks();
+    }
+
+    function renderChunks() {
+      const list = qs('#samplesList');
+      if (!state.group || state.sourceId == null) {
+        list.innerHTML = '<div class="empty-state">Select a source to list samples.</div>';
+        return;
+      }
+      if (!state.chunks.length) {
+        list.innerHTML = '<div class="empty-state">No samples for this source / page.</div>';
+        return;
+      }
+      list.innerHTML = state.chunks.map(c => sampleCard(c)).join('');
+      list.querySelectorAll('[data-action]').forEach(btn => {
+        btn.addEventListener('click', () => handleAction(btn.dataset.action, btn.dataset.id, btn.dataset.index));
+      });
+    }
+
+    function sampleCard(c) {
+      const pageInfo = c.page != null ? `Page ${c.page}` : '—';
+      return `
+        <div class="sample-card" data-id="${c.id}">
+          <div class="meta">#${c.chunk_index} · ${pageInfo} · ${c.artifact_type || 'text'}</div>
+          <div class="text" data-id="${c.id}">${escapeHtml(c.text)}</div>
+          <textarea data-id="${c.id}" style="display: none;"></textarea>
+          <div class="sample-actions">
+            <button data-action="edit" data-id="${c.id}">Edit</button>
+            <button data-action="insertAbove" data-id="${c.id}" data-index="${c.chunk_index}">Insert above</button>
+            <button data-action="insertBelow" data-id="${c.id}" data-index="${c.chunk_index}">Insert below</button>
+            <button data-action="delete" data-id="${c.id}" class="danger">Delete</button>
+          </div>
+        </div>
+      `;
+    }
+
+    function escapeHtml(s) {
+      const div = document.createElement('div');
+      div.textContent = s;
+      return div.innerHTML;
+    }
+
+    async function handleAction(action, id, index) {
+      const group = encodeURIComponent(state.group);
+      const chunkId = id;
+      const chunkIndex = parseInt(index, 10);
+
+      if (action === 'edit') {
+        const card = qs(`.sample-card[data-id="${chunkId}"]`);
+        const textEl = card.querySelector('.text');
+        const ta = card.querySelector('textarea');
+        if (ta.style.display === 'block') {
+          const newText = ta.value.trim();
+          if (newText === textEl.textContent.trim()) { ta.style.display = 'none'; textEl.style.display = 'block'; return; }
+          try {
+            const r = await fetch(API + `/groups/${group}/chunks/${chunkId}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ text: newText }),
+            });
+            if (!r.ok) throw new Error();
+            textEl.textContent = newText;
+            ta.style.display = 'none';
+            textEl.style.display = 'block';
+            card.querySelector('[data-action="saveEdit"]').textContent = 'Edit';
+            card.querySelector('[data-action="saveEdit"]').dataset.action = 'edit';
+            toast('Saved.');
+          } catch (e) {
+            toast('Failed to save.');
+          }
+          return;
+        }
+        ta.value = textEl.textContent;
+        textEl.style.display = 'none';
+        ta.style.display = 'block';
+        ta.focus();
+        const saveBtn = card.querySelector('[data-action="edit"]');
+        saveBtn.textContent = 'Save';
+        saveBtn.dataset.action = 'saveEdit';
+        return;
+      }
+
+      if (action === 'saveEdit') {
+        const card = qs(`.sample-card[data-id="${chunkId}"]`);
+        const textEl = card.querySelector('.text');
+        const ta = card.querySelector('textarea');
+        const newText = ta.value.trim();
+        try {
+          const r = await fetch(API + `/groups/${group}/chunks/${chunkId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: newText }),
+          });
+          if (!r.ok) throw new Error();
+          textEl.textContent = newText;
+          ta.style.display = 'none';
+          textEl.style.display = 'block';
+          card.querySelector('[data-action="saveEdit"]').textContent = 'Edit';
+          card.querySelector('[data-action="saveEdit"]').dataset.action = 'edit';
+          toast('Saved.');
+        } catch (e) {
+          toast('Failed to save.');
+        }
+        return;
+      }
+
+      if (action === 'insertAbove' || action === 'insertBelow') {
+        const text = prompt('New sample text:');
+        if (text == null || !text.trim()) return;
+        const body = action === 'insertAbove' ? { text: text.trim(), before_index: chunkIndex } : { text: text.trim(), after_index: chunkIndex };
+        try {
+          await fetch(API + `/groups/${group}/sources/${state.sourceId}/chunks`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          toast('Inserted.');
+          loadChunks();
+        } catch (e) {
+          toast('Failed to insert.');
+        }
+        return;
+      }
+
+      if (action === 'delete') {
+        if (!confirm('Delete this sample?')) return;
+        try {
+          const r = await fetch(API + `/groups/${group}/chunks/${chunkId}`, { method: 'DELETE' });
+          if (!r.ok) throw new Error();
+          toast('Deleted.');
+          loadChunks();
+        } catch (e) {
+          toast('Failed to delete.');
+        }
+      }
+    }
+
+    qs('#groupSelect').addEventListener('change', onGroupChange);
+    qs('#sourceSelect').addEventListener('change', onSourceChange);
+    qsAll('input[name="filter"]').forEach(el => el.addEventListener('change', loadChunks));
+    qs('#pageNum').addEventListener('change', loadChunks);
+
+    loadGroups();
+  </script>
+</body>
+</html>

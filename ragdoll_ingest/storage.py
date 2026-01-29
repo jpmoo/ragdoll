@@ -464,6 +464,97 @@ def list_sources(conn: sqlite3.Connection) -> list[tuple[int, str, int]]:
     return []
 
 
+def get_chunks_for_source(
+    conn: sqlite3.Connection, source_id: int, page: int | None = None
+) -> list[dict]:
+    """
+    List chunks for a source. Returns list of dicts with id, chunk_index, text, page, artifact_type.
+    If page is not None, only chunks with that page (or None for page-agnostic) are returned.
+    """
+    init_db(conn)
+    _migrate_sources_table(conn)
+    if page is not None:
+        rows = conn.execute(
+            "SELECT id, chunk_index, text, page, artifact_type FROM chunks WHERE source_id = ? AND (page IS NULL OR page = ?) ORDER BY chunk_index",
+            (source_id, page),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT id, chunk_index, text, page, artifact_type FROM chunks WHERE source_id = ? ORDER BY chunk_index",
+            (source_id,),
+        ).fetchall()
+    return [
+        {
+            "id": row["id"],
+            "chunk_index": row["chunk_index"],
+            "text": row["text"],
+            "page": row["page"],
+            "artifact_type": row["artifact_type"] or "text",
+        }
+        for row in rows
+    ]
+
+
+def get_chunk_by_id(conn: sqlite3.Connection, chunk_id: int) -> dict | None:
+    """Get a single chunk by id. Returns dict with id, source_id, source_path, source_type, chunk_index, text, page, artifact_type, or None."""
+    init_db(conn)
+    row = conn.execute(
+        "SELECT id, source_id, source_path, source_type, chunk_index, text, page, artifact_type FROM chunks WHERE id = ?",
+        (chunk_id,),
+    ).fetchone()
+    if not row:
+        return None
+    return dict(row)
+
+
+def update_chunk_text(
+    conn: sqlite3.Connection, chunk_id: int, new_text: str, new_embedding: list[float]
+) -> None:
+    """Update chunk text and embedding by id."""
+    init_db(conn)
+    text = clean_text(new_text)
+    conn.execute(
+        "UPDATE chunks SET text = ?, embedding = ? WHERE id = ?",
+        (text, json.dumps(new_embedding), chunk_id),
+    )
+
+
+def insert_chunk_at(
+    conn: sqlite3.Connection,
+    source_id: int,
+    source_path: str,
+    source_type: str,
+    at_index: int,
+    text: str,
+    embedding: list[float],
+    page: int | None = None,
+    artifact_type: str = "text",
+    artifact_path: str | None = None,
+) -> int:
+    """
+    Insert a new chunk at chunk_index = at_index. Existing chunks with chunk_index >= at_index are shifted by 1.
+    Returns the new chunk's id.
+    """
+    init_db(conn)
+    text = clean_text(text)
+    conn.execute(
+        "UPDATE chunks SET chunk_index = chunk_index + 1 WHERE source_id = ? AND chunk_index >= ?",
+        (source_id, at_index),
+    )
+    cursor = conn.execute(
+        "INSERT INTO chunks (source_id, source_path, source_type, chunk_index, text, embedding, artifact_type, artifact_path, page) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (source_id, source_path, source_type, at_index, text, json.dumps(embedding), artifact_type, artifact_path, page),
+    )
+    return cursor.lastrowid
+
+
+def delete_chunk(conn: sqlite3.Connection, chunk_id: int) -> bool:
+    """Delete a chunk by id. Returns True if a row was deleted."""
+    init_db(conn)
+    cursor = conn.execute("DELETE FROM chunks WHERE id = ?", (chunk_id,))
+    return cursor.rowcount > 0
+
+
 def _list_sync_groups() -> list[str]:
     """Group dirs under DATA_DIR that have ragdoll.db."""
     d = Path(config.DATA_DIR)
