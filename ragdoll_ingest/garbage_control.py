@@ -67,9 +67,13 @@ def _has_excessive_repetition(text: str) -> bool:
 
 def _is_structural_noise(text: str) -> bool:
     """Check for structural red flags: headers-only, navigation fragments."""
-    # Very short lines suggest headers/navigation
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    # Very short lines suggest headers/navigation
     if len(lines) <= 2 and all(len(ln) < 50 for ln in lines):
+        # Keep section headers that look like "Key Terms" / "Overview" with content (e.g. list)
+        text_lower = text.lower()
+        if any(phrase in text_lower for phrase in ("key term", "overview", "summary", "key concept", "glossary", "definition")):
+            return False
         return True
     # All caps with no lowercase suggests headers
     if len(text) > 20 and text.isupper() and not any(c.islower() for c in text):

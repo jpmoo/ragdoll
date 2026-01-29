@@ -18,6 +18,53 @@ def _tokens_approx(text: str) -> int:
     return max(1, len(text) // CHARS_PER_TOKEN)
 
 
+def _looks_like_section_header(block: str) -> bool:
+    """True if block is a short title/header that should stay with the following content."""
+    block = block.strip()
+    if not block:
+        return False
+    lines = [ln.strip() for ln in block.splitlines() if ln.strip()]
+    # Markdown-style header (## Key Terms or # Overview)
+    if len(lines) == 1 and re.match(r"^#+\s*\S", lines[0]):
+        return True
+    # Single line, short (e.g. "Key Terms", "Overview")
+    if len(lines) == 1 and len(lines[0]) <= 80:
+        line = lines[0]
+        if line.endswith(":"):
+            return True
+        # Common section titles (case-insensitive)
+        if line.lower() in (
+            "key terms", "overview", "summary", "introduction", "background",
+            "key concepts", "key points", "glossary", "definitions", "references",
+        ):
+            return True
+        # Short line that looks like a title (no sentence-ending punctuation)
+        if len(line) <= 60 and "." not in line and "!" not in line and "?" not in line:
+            return True
+    # Two short lines (e.g. "Key Terms" + blank or subtitle)
+    if len(lines) == 2 and all(len(ln) <= 60 for ln in lines):
+        return True
+    return False
+
+
+def _merge_header_blocks(blocks: list[str]) -> list[str]:
+    """Merge header-like blocks with the next block so section headers stay with their content."""
+    if not blocks:
+        return []
+    out: list[str] = []
+    i = 0
+    while i < len(blocks):
+        b = blocks[i]
+        if _looks_like_section_header(b) and i + 1 < len(blocks):
+            # Merge header with next block
+            out.append(b.strip() + "\n\n" + blocks[i + 1].strip())
+            i += 2
+            continue
+        out.append(b)
+        i += 1
+    return out
+
+
 def _split_blocks(text: str) -> list[str]:
     """Split into paragraphs/blocks (by double newline or single when very long)."""
     text = text.strip()
@@ -37,7 +84,7 @@ def _split_blocks(text: str) -> list[str]:
                     out.append(line)
         else:
             out.append(b)
-    return out
+    return _merge_header_blocks(out)
 
 
 def _llm_split_long(text: str, ollama_url: str, group: str = "_root") -> list[str]:
