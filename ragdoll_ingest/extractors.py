@@ -62,12 +62,24 @@ class Document:
 def extract_document(path: Path) -> Document | None:
     """
     Structured extraction for PDF, DOCX, Excel. Returns None for plain text, images, or unsupported.
+    When RAGDOLL_USE_DOCLING=true and docling is installed, tries Docling first for PDF/DOCX/XLSX/PPTX/image; falls back to legacy on failure.
     - PDF: text blocks per page; low-text pages with images -> chart regions.
     - DOCX: paragraphs -> text; doc.tables -> table regions.
     - Excel: each sheet -> one table region.
     """
     path = Path(path)
     suffix = path.suffix.lower()
+
+    # Optional: try Docling first when enabled (pip install '.[docling]', RAGDOLL_USE_DOCLING=true)
+    if config.USE_DOCLING and suffix in _docling_ext():
+        try:
+            from .extractors_docling import extract_document_with_docling
+            doc = extract_document_with_docling(path)
+            if doc is not None and doc.has_embeddable():
+                return doc
+        except Exception as e:
+            logger.debug("Docling extraction failed, using legacy: %s", e)
+
     if suffix in config.PDF_EXT:
         return _extract_pdf_document(path)
     if suffix in config.WORD_EXT:
@@ -75,6 +87,11 @@ def extract_document(path: Path) -> Document | None:
     if suffix in config.EXCEL_EXT:
         return _extract_excel_document(path)
     return None
+
+
+def _docling_ext() -> set:
+    """Extensions Docling can ingest (avoids importing extractors_docling at module load)."""
+    return config.PDF_EXT | config.WORD_EXT | config.EXCEL_EXT | {".pptx"} | config.IMAGE_EXT
 
 
 def _page_to_png_bytes(page) -> bytes:

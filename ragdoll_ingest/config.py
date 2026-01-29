@@ -127,3 +127,6 @@ PDF_EXT = {".pdf"}
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp", ".gif"}
 
 SUPPORTED_EXT = TEXT_EXT | WORD_EXT | EXCEL_EXT | PDF_EXT | IMAGE_EXT
+
+# Docling: when True, use Docling for PDF/DOCX/XLSX/PPTX/image ingestion (fallback to legacy on failure)
+USE_DOCLING = (get_env("RAGDOLL_USE_DOCLING") or "false").lower() in ("true", "1", "yes")

@@ -20,6 +20,15 @@ source .venv/bin/activate
 pip install -e .
 ```
 
+**Optional: Docling ingester** — For better table extraction and layout understanding (PDF, DOCX, XLSX, PPTX, images), install the Docling extra and enable it:
+
+```bash
+pip install -e '.[docling]'
+# In env.ragdoll: RAGDOLL_USE_DOCLING=true
+```
+
+Docling runs first when enabled; on failure or unsupported format the existing (legacy) extractors are used. Chunking, LLM interpretation of figures/tables, and embedding are unchanged.
+
 ## Configuration
 
 ### One file: `env.ragdoll`
@@ -55,6 +64,7 @@ Optional env vars:
 | `RAGDOLL_TARGET_CHUNK_TOKENS` | `400` | Target size per chunk |
 | `RAGDOLL_MAX_CHUNK_TOKENS` | `600` | Max before LLM-assisted split |
 | `RAGDOLL_CHUNK_LLM_TIMEOUT` | `300` | Seconds to wait for Ollama (chunk split, chart/table interpret) |
+| `RAGDOLL_USE_DOCLING` | `false` | Use [Docling](https://docling-project.github.io/docling/) for PDF/DOCX/XLSX/PPTX/image ingestion when set to `true`; requires `pip install -e '.[docling]'`. Falls back to legacy extractors on failure. |
 
 ## Run manually
 

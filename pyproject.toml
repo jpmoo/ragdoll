@@ -22,6 +22,9 @@ dependencies = [
     "uvicorn>=0.24.0",
 ]
 
+[project.optional-dependencies]
+docling = ["docling>=2.0.0", "pandas>=2.0.0"]
+
 [project.scripts]
 ragdoll-ingest = "ragdoll_ingest.__main__:main"
 ragdoll = "ragdoll_ingest.cli:main"
