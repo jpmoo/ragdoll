@@ -32,7 +32,7 @@ def get_env_path(key: str, default: Path | None = None) -> Path | None:
     v = get_env(key)
     if v is None or v == "":
         return default
-    return Path(v).expanduser().resolve()
+    return Path(str(v)).expanduser().resolve()
 
 
 # Required: user-provided ingest folder

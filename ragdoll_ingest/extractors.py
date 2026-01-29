@@ -78,7 +78,9 @@ def extract_document(path: Path) -> Document | None:
     - DOCX: paragraphs -> text; doc.tables -> table regions.
     - Excel: each sheet -> one table region.
     """
-    path = Path(path)
+    path = Path(str(path)).resolve() if path else None
+    if path is None or not path.is_file():
+        return None
     suffix = path.suffix.lower()
     docling_ext = _docling_ext()
     legacy_ext = _legacy_structured_ext()

@@ -63,7 +63,10 @@ def _should_ignore(p: Path, root: Path) -> bool:
 
 def _group_from_path(p: Path) -> str:
     try:
-        rel = p.resolve().relative_to(Path(config.INGEST_PATH).resolve())
+        ingest = Path(str(config.INGEST_PATH)).resolve() if config.INGEST_PATH else None
+        if ingest is None:
+            return "_root"
+        rel = p.resolve().relative_to(ingest)
     except ValueError:
         return "_root"
     parts = rel.parts
@@ -73,7 +76,10 @@ def _group_from_path(p: Path) -> str:
 def _rel_within_group(p: Path) -> Path:
     """Path for the file inside the group's sources/. Only one level of grouping: the first subfolder under ingest is the group. Any deeper nesting (e.g. reports/2024/x.pdf) is flattened into a single filename (e.g. 2024_x.pdf)."""
     try:
-        rel = p.resolve().relative_to(Path(config.INGEST_PATH).resolve())
+        ingest = Path(str(config.INGEST_PATH)).resolve() if config.INGEST_PATH else None
+        if ingest is None:
+            return Path(p.name)
+        rel = p.resolve().relative_to(ingest)
     except ValueError:
         return Path(p.name)
     parts = rel.parts
@@ -119,7 +125,10 @@ def _process_one(fpath: Path) -> None:
         logger.info("Already processed: %s", p)
         return
 
-    root = Path(config.INGEST_PATH)
+    root = Path(str(config.INGEST_PATH)).resolve() if config.INGEST_PATH else None
+    if root is None or not root.is_dir():
+        action_log("process_skip", file=str(p), error="INGEST_PATH not set or not a directory", group=group)
+        return
 
     # Empty or still-copying (e.g. network mount): wait and recheck to avoid "Cannot open empty file"
     if stat.st_size == 0:
@@ -348,11 +357,12 @@ def _sync_loop() -> None:
 
 
 def run_watcher(process_existing: bool = True) -> None:
-    if not config.INGEST_PATH or not config.INGEST_PATH.is_dir():
+    ingest_path = Path(str(config.INGEST_PATH)).resolve() if config.INGEST_PATH else None
+    if not ingest_path or not ingest_path.is_dir():
         raise SystemExit("RAGDOLL_INGEST_PATH must be set to an existing directory")
 
     migrate_flat_to_root()
-    action_log("watcher_start", ingest_path=str(config.INGEST_PATH), group="_root")
+    action_log("watcher_start", ingest_path=str(ingest_path), group="_root")
     q: queue.Queue = queue.Queue()
     stop = threading.Event()
     t = threading.Thread(target=_worker, args=(q, stop), daemon=False)
@@ -367,12 +377,12 @@ def run_watcher(process_existing: bool = True) -> None:
         sync_thread.start()
 
     if process_existing:
-        _scan_existing(Path(config.INGEST_PATH), q)
+        _scan_existing(ingest_path, q)
 
     observer = Observer()
-    observer.schedule(IngestHandler(config.INGEST_PATH, q), str(config.INGEST_PATH), recursive=True)
+    observer.schedule(IngestHandler(ingest_path, q), str(ingest_path), recursive=True)
     observer.start()
-    logger.info("Watching %s", config.INGEST_PATH)
+    logger.info("Watching %s", ingest_path)
 
     try:
         while True:
