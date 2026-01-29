@@ -99,6 +99,84 @@ def extract_key_phrases_from_text(text: str, max_phrases: int = 10) -> list[str]
     # Filter out any None or empty strings (defensive)
     return [p for p in phrases if p and isinstance(p, str)]
 
+
+# Max characters sent to LLM for key-term extraction (avoid timeouts)
+_KEY_TERMS_LLM_MAX_CHARS = 4000
+
+
+def extract_key_phrases_llm(
+    text: str,
+    max_phrases: int = 10,
+    ollama_url: str | None = None,
+    group: str = "_root",
+) -> list[str]:
+    """Ask LLM to extract key terms/phrases from text. Returns [] on failure or empty response."""
+    if not (text or "").strip():
+        return []
+    url = (ollama_url or config.OLLAMA_HOST or "").rstrip("/")
+    if not url:
+        return []
+    input_text = text.strip()
+    if len(input_text) > _KEY_TERMS_LLM_MAX_CHARS:
+        input_text = input_text[: _KEY_TERMS_LLM_MAX_CHARS] + "..."
+    prompt = (
+        "From the following text, extract up to 10 key terms or short phrases (2-4 words) that best describe the content. "
+        "Return ONLY valid JSON in this exact format, no other text:\n"
+        '{"key_terms": ["term1", "term2", ...]}\n\n'
+        "Text:\n\n"
+    ) + input_text
+    try:
+        import requests
+
+        r = requests.post(
+            f"{url}/api/generate",
+            json={
+                "model": config.INTERPRET_MODEL,
+                "prompt": prompt,
+                "stream": False,
+                "format": "json",
+            },
+            timeout=config.CHUNK_LLM_TIMEOUT,
+        )
+        r.raise_for_status()
+        resp = (r.json().get("response") or "").strip()
+        if not resp:
+            return []
+        if "```" in resp:
+            m = re.search(r"```(?:json)?\s*([\s\S]*?)```", resp)
+            if m:
+                resp = m.group(1).strip()
+        obj = json.loads(resp)
+        raw = obj.get("key_terms")
+        if not isinstance(raw, list):
+            return []
+        phrases = [str(x).strip() for x in raw if x and str(x).strip()][:max_phrases]
+        phrases = [p for p in phrases if p and isinstance(p, str)]
+        if phrases:
+            action_log("key_terms_llm", model=config.INTERPRET_MODEL, num_terms=len(phrases), group=group)
+        return phrases
+    except Exception as e:
+        logger.warning("Key terms LLM request failed: %s", e)
+        return []
+
+
+def get_key_phrases_for_content(
+    text: str,
+    filename: str | None = None,
+    max_phrases: int = 10,
+    ollama_url: str | None = None,
+    group: str = "_root",
+) -> list[str]:
+    """Get key phrases from content: try LLM first, fall back to heuristic (filename + text n-grams)."""
+    llm_phrases = extract_key_phrases_llm(text, max_phrases=max_phrases, ollama_url=ollama_url, group=group)
+    if llm_phrases:
+        return llm_phrases
+    filename_phrases = extract_key_phrases_from_filename(filename or "")
+    text_phrases = extract_key_phrases_from_text(text or "", max_phrases=max_phrases)
+    combined = [p for p in set(filename_phrases + text_phrases) if p and isinstance(p, str)][:max_phrases]
+    return combined
+
+
 _processed_cache: dict[str, set[tuple[str, float, int]]] = {}
 _processed_lock = threading.Lock()
 

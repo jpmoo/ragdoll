@@ -61,7 +61,7 @@ Optional env vars:
 | `RAGDOLL_EMBED_MODEL` | `nomic-embed-text:latest` | Embedding model |
 | `RAGDOLL_CHUNK_MODEL` | `llama3.2:3b` | Model for semantic splitting of long paragraphs |
 | `RAGDOLL_INTERPRET_MODEL` | same as `RAGDOLL_CHUNK_MODEL` | Model for chart and table interpretation (qualitative summaries; anti-hallucination) |
-| `RAGDOLL_SEMANTIC_CHUNKING` | `true` | When `true`, combine all document text, strip links/formatting, and ask the LLM for character start/end indices of semantic chunks (then snap to sentence/paragraph). When `false`, use paragraph-based splitting and LLM only for long paragraphs. |
+| `RAGDOLL_SEMANTIC_CHUNKING` | `true` | When `true`, combine all document text, strip links/formatting, and ask the LLM to output the text of each semantic chunk (then locate in text for page mapping). When `false`, use paragraph-based splitting and LLM only for long paragraphs. |
 | `RAGDOLL_TARGET_CHUNK_TOKENS` | `400` | Target size per chunk |
 | `RAGDOLL_MAX_CHUNK_TOKENS` | `600` | Max before LLM-assisted split |
 | `RAGDOLL_CHUNK_LLM_TIMEOUT` | `300` | Seconds to wait for Ollama (chunk split, chart/table interpret) |
@@ -117,7 +117,7 @@ python -m ragdoll_ingest
 
 ## Chunking
 
-With **`RAGDOLL_SEMANTIC_CHUNKING=true`** (default), document text is combined into one string, stripped of links and markdown formatting, and the LLM returns **character start/end indices** for each semantic chunk. Boundaries are snapped to sentence or paragraph so cuts are clean. Long documents are processed in windows (~10k chars per LLM call). Chunk text is exact slices of the cleaned string (no LLM rewriting). Set to `false` to use the previous behavior: paragraph-based splitting and LLM only for long paragraphs.
+With **`RAGDOLL_SEMANTIC_CHUNKING=true`** (default), document text is combined into one string, stripped of links and markdown formatting, and the LLM **outputs the text of each semantic chunk** (no start/end indices). Each chunk is then located in the cleaned string to get a start offset for page mapping. Long documents are processed in windows (~10k chars per LLM call). Set to `false` to use paragraph-based splitting and LLM only for long paragraphs.
 
 ## Supported file types
 

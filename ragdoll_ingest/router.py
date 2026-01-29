@@ -2,12 +2,11 @@
 
 import re
 
-from . import config
 from .artifacts import store_chart_image, store_figure, store_table
 from .chunker import chunk_text
 from .extractors import ocr_image_bytes
 from .interpreters import interpret_chart, interpret_figure, interpret_table
-from .storage import extract_key_phrases_from_filename, extract_key_phrases_from_text
+from .storage import get_key_phrases_for_content
 
 
 def classify_image(ocr_text: str) -> str:
@@ -74,10 +73,8 @@ def route_image(
     if kind == "chart":
         summary = interpret_chart(ocr, group=group, filename=str(source_stem) if source_stem else None)
         ap = store_chart_image(group, source_stem, page_or_idx or 0, idx, image_bytes, ext or "png")
-        filename_phrases = extract_key_phrases_from_filename(str(source_stem) if source_stem else "")
-        ocr_phrases = extract_key_phrases_from_text(ocr or "")
-        all_phrases = [p for p in set(filename_phrases + ocr_phrases) if p and isinstance(p, str)][:10]
-        # Append key phrases to summary text
+        content = f"{summary}\n{ocr or ''}"
+        all_phrases = get_key_phrases_for_content(content, filename=str(source_stem) if source_stem else None, group=group)
         if all_phrases:
             summary = f"{summary} Key terms: {', '.join(all_phrases)}."
         return [{"text": summary, "artifact_type": "chart_summary", "artifact_path": ap, "page": page_or_idx}]
@@ -88,11 +85,9 @@ def route_image(
             data = [[ocr[:500] or "(no structure)"]]
         summary = interpret_table(data, group=group, filename=str(source_stem) if source_stem else None)
         ap = store_table(group, source_stem, page_or_idx, idx, data)
-        filename_phrases = extract_key_phrases_from_filename(str(source_stem) if source_stem else "")
         table_text = " ".join(" ".join(str(c) if c is not None else "" for c in row) for row in (data or []) if row)
-        table_phrases = extract_key_phrases_from_text(table_text)
-        all_phrases = [p for p in set(filename_phrases + table_phrases) if p and isinstance(p, str)][:10]
-        # Append key phrases to summary text
+        content = f"{summary}\n{table_text}"
+        all_phrases = get_key_phrases_for_content(content, filename=str(source_stem) if source_stem else None, group=group)
         if all_phrases:
             summary = f"{summary} Key terms: {', '.join(all_phrases)}."
         return [{"text": summary, "artifact_type": "table_summary", "artifact_path": ap, "page": page_or_idx}]
@@ -100,10 +95,8 @@ def route_image(
     # figure
     summary, process = interpret_figure(ocr, group=group, filename=str(source_stem) if source_stem else None)
     ap = store_figure(group, source_stem, page_or_idx or 0, idx, image_bytes, process, ocr)
-    filename_phrases = extract_key_phrases_from_filename(str(source_stem) if source_stem else "")
-    ocr_phrases = extract_key_phrases_from_text(ocr or "")
-    all_phrases = [p for p in set(filename_phrases + ocr_phrases) if p and isinstance(p, str)][:10]
-    # Append key phrases to summary text
+    content = f"{summary}\n{ocr or ''}"
+    all_phrases = get_key_phrases_for_content(content, filename=str(source_stem) if source_stem else None, group=group)
     if all_phrases:
         summary = f"{summary} Key terms: {', '.join(all_phrases)}."
     return [{"text": summary, "artifact_type": "figure_summary", "artifact_path": ap, "page": page_or_idx}]

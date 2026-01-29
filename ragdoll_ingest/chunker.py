@@ -81,16 +81,16 @@ def _snap_to_boundaries(text: str, start: int, end: int) -> tuple[int, int]:
     return start, end
 
 
-def _get_semantic_chunk_indices_one(
-    window_text: str, ollama_url: str, group: str = "_root"
-) -> list[tuple[int, int]]:
-    """Ask LLM for character start/end indices of semantic chunks in this text. Returns list of (start, end)."""
+def _get_semantic_chunk_texts_one(
+    window_text: str, ollama_url: str, group: str = "_root", window_offset: int = 0
+) -> list[tuple[str, int]]:
+    """Ask LLM for semantic chunks as text. Returns list of (chunk_text, start_offset) by locating each chunk in window_text."""
     prompt = (
-        "Given the following text, identify semantic chunk boundaries. "
-        "Each chunk should be a coherent semantic unit (e.g. a section, a few related paragraphs). "
-        "Return ONLY valid JSON with a single key 'chunks' whose value is an array of objects, each with 'start' and 'end' (0-based character indices). "
-        "Chunks must not overlap, must be in order, and must cover the whole text from 0 to the last character. "
-        "Example: {\"chunks\": [{\"start\": 0, \"end\": 420}, {\"start\": 421, \"end\": 890}]}\n\n"
+        "Split the following text into coherent semantic chunks. "
+        "Each chunk should be a self-contained unit (e.g. a section, a few related paragraphs). "
+        "Copy the exact text for each chunk; do not paraphrase or omit. "
+        "Return ONLY valid JSON in this exact format, no other text:\n"
+        '{"chunks": ["first chunk full text", "second chunk full text", ...]}\n\n'
         "Text:\n\n"
     ) + window_text
 
@@ -119,68 +119,56 @@ def _get_semantic_chunk_indices_one(
         chunks_raw = obj.get("chunks")
         if not isinstance(chunks_raw, list):
             return []
-        n = len(window_text)
-        out: list[tuple[int, int]] = []
+        out: list[tuple[str, int]] = []
+        search_start = 0
         for item in chunks_raw:
-            if not isinstance(item, dict):
+            if not isinstance(item, str):
                 continue
-            s = item.get("start")
-            e = item.get("end")
-            if s is None or e is None:
+            chunk_str = item.strip()
+            if not chunk_str:
                 continue
-            try:
-                start_i = int(s)
-                end_i = int(e)
-            except (TypeError, ValueError):
-                continue
-            if start_i < 0 or end_i <= start_i or end_i > n:
-                continue
-            out.append((start_i, end_i))
+            # Locate this chunk in the window text (from search_start) to get start_offset for page mapping
+            idx = window_text.find(chunk_str, search_start)
+            if idx >= 0:
+                start_offset = window_offset + idx
+                search_start = idx + len(chunk_str)
+            else:
+                start_offset = window_offset + search_start
+            out.append((chunk_str, start_offset))
         if not out:
             return []
-        out.sort(key=lambda x: x[0])
-        # Merge overlapping and fill gaps
-        merged: list[tuple[int, int]] = [out[0]]
-        for a, b in out[1:]:
-            if a <= merged[-1][1]:
-                merged[-1] = (merged[-1][0], max(merged[-1][1], b))
-            else:
-                merged.append((a, b))
         action_log(
             "chunk_semantic",
             model=config.CHUNK_MODEL,
             input_len=len(window_text),
-            num_chunks=len(merged),
+            num_chunks=len(out),
             group=group,
         )
-        return merged
+        return out
     except Exception as e:
-        logger.warning("Semantic chunk indices request failed: %s", e)
+        logger.warning("Semantic chunk (text) request failed: %s", e)
         return []
 
 
-def _get_semantic_chunk_indices(
+def _get_semantic_chunk_texts(
     full_text: str, ollama_url: str, group: str = "_root"
-) -> list[tuple[int, int]]:
-    """Get semantic chunk (start, end) indices for full text, using windowing if too long."""
+) -> list[tuple[str, int]]:
+    """Get semantic chunks as text (and start_offset for page mapping), using windowing if too long."""
     if not full_text.strip():
         return []
     if len(full_text) <= SEMANTIC_CHUNK_WINDOW:
-        return _get_semantic_chunk_indices_one(full_text, ollama_url, group)
-    # Windowing: non-overlapping windows, chunk each independently
-    all_indices: list[tuple[int, int]] = []
+        return _get_semantic_chunk_texts_one(full_text, ollama_url, group, window_offset=0)
+    all_chunks: list[tuple[str, int]] = []
     offset = 0
     while offset < len(full_text):
         window = full_text[offset : offset + SEMANTIC_CHUNK_WINDOW]
         if not window.strip():
             offset += SEMANTIC_CHUNK_WINDOW
             continue
-        indices = _get_semantic_chunk_indices_one(window, ollama_url, group)
-        for s, e in indices:
-            all_indices.append((offset + s, offset + e))
+        part = _get_semantic_chunk_texts_one(window, ollama_url, group, window_offset=offset)
+        all_chunks.extend(part)
         offset += SEMANTIC_CHUNK_WINDOW
-    all_indices.sort(key=lambda x: x[0])
-    return all_indices
+    return all_chunks
 
 
 def chunk_text_semantic(
@@ -190,35 +178,23 @@ def chunk_text_semantic(
     pre_cleaned: bool = False,
 ) -> list[tuple[str, int]]:
     """
-    Clean full text (unless pre_cleaned=True), ask LLM for semantic chunk boundaries (start/end indices),
-    snap to paragraph/sentence boundaries, and return list of (chunk_string, start_offset).
-    Caller uses start_offset with offset_to_page (built in cleaned space) to get page for each chunk.
+    Clean full text (unless pre_cleaned=True), ask LLM to output chunk text directly (no indices).
+    Locate each chunk in cleaned text to get start_offset for page mapping.
+    Returns list of (chunk_string, start_offset).
     """
     url = ollama_url or config.OLLAMA_HOST
     cleaned = full_text if pre_cleaned else _clean_for_chunking(full_text)
     if not cleaned.strip():
         return []
-    indices = _get_semantic_chunk_indices(cleaned, url, group)
-    if not indices:
-        # Fallback: one chunk if short enough, else legacy chunk_text (start_offset 0 so page = first page)
+    result = _get_semantic_chunk_texts(cleaned, url, group)
+    if not result:
+        # Fallback: one chunk if short enough, else legacy chunk_text
         if _tokens_approx(cleaned) <= config.MAX_CHUNK_TOKENS:
             return [(cleaned, 0)]
         legacy_chunks = chunk_text(cleaned, url, group)
         if not legacy_chunks:
             return [(cleaned.strip(), 0)] if cleaned.strip() else []
         return [(c, 0) for c in legacy_chunks]
-    # Snap and slice
-    result: list[tuple[str, int]] = []
-    for start, end in indices:
-        start, end = _snap_to_boundaries(cleaned, start, end)
-        if start >= end:
-            continue
-        chunk_str = cleaned[start:end].strip()
-        if not chunk_str:
-            continue
-        result.append((chunk_str, start))
-    if not result:
-        return [(cleaned.strip(), 0)] if cleaned.strip() else []
     return result
 
 

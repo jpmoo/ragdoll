@@ -23,8 +23,7 @@ from .storage import (
     _connect,
     add_chunks,
     already_processed,
-    extract_key_phrases_from_filename,
-    extract_key_phrases_from_text,
+    get_key_phrases_for_content,
     mark_processed,
     migrate_flat_to_root,
     run_sync_pass,
@@ -161,22 +160,17 @@ def _process_one(fpath: Path) -> None:
                 ocr = ocr_image_bytes(cr.image_bytes)
                 summary = interpret_chart(ocr, group=group, filename=str(p.stem) if p.stem else None)
                 ap = store_chart_image(group, p.stem, cr.page, idx, cr.image_bytes, cr.image_ext)
-                filename_phrases = extract_key_phrases_from_filename(str(p.stem) if p.stem else "")
-                ocr_phrases = extract_key_phrases_from_text(ocr or "")
-                all_phrases = [p for p in set(filename_phrases + ocr_phrases) if p and isinstance(p, str)][:10]  # Combine, dedupe, filter None, limit
-                # Append key phrases to summary text
+                content = f"{summary}\n{ocr or ''}"
+                all_phrases = get_key_phrases_for_content(content, filename=str(p.stem) if p.stem else None, group=group)
                 if all_phrases:
                     summary = f"{summary} Key terms: {', '.join(all_phrases)}."
                 chunks_list.append({"text": summary, "artifact_type": "chart_summary", "artifact_path": ap, "page": cr.page})
             for idx, tr in enumerate(doc.table_regions):
                 summary = interpret_table(tr.data, group=group, filename=str(p.stem) if p.stem else None)
                 ap = store_table(group, p.stem, tr.page, idx, tr.data)
-                filename_phrases = extract_key_phrases_from_filename(str(p.stem) if p.stem else "")
-                # Extract text from table data for key phrases (handle None values)
                 table_text = " ".join(" ".join(str(c) if c is not None else "" for c in row) for row in (tr.data or []) if row)
-                table_phrases = extract_key_phrases_from_text(table_text)
-                all_phrases = [p for p in set(filename_phrases + table_phrases) if p and isinstance(p, str)][:10]
-                # Append key phrases to summary text
+                content = f"{summary}\n{table_text}"
+                all_phrases = get_key_phrases_for_content(content, filename=str(p.stem) if p.stem else None, group=group)
                 if all_phrases:
                     summary = f"{summary} Key terms: {', '.join(all_phrases)}."
                 chunks_list.append({"text": summary, "artifact_type": "table_summary", "artifact_path": ap, "page": tr.page})
@@ -184,10 +178,8 @@ def _process_one(fpath: Path) -> None:
                 ocr = ocr_image_bytes(fr.image_bytes)
                 summary, process = interpret_figure(ocr, group=group, filename=str(p.stem) if p.stem else None)
                 ap = store_figure(group, p.stem, fr.page, idx, fr.image_bytes, process, ocr)
-                filename_phrases = extract_key_phrases_from_filename(str(p.stem) if p.stem else "")
-                ocr_phrases = extract_key_phrases_from_text(ocr or "")
-                all_phrases = [p for p in set(filename_phrases + ocr_phrases) if p and isinstance(p, str)][:10]  # Combine, dedupe, filter None, limit
-                # Append key phrases to summary text
+                content = f"{summary}\n{ocr or ''}"
+                all_phrases = get_key_phrases_for_content(content, filename=str(p.stem) if p.stem else None, group=group)
                 if all_phrases:
                     summary = f"{summary} Key terms: {', '.join(all_phrases)}."
                 chunks_list.append({"text": summary, "artifact_type": "figure_summary", "artifact_path": ap, "page": fr.page})
