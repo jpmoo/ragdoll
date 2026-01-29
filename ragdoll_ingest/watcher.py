@@ -172,9 +172,9 @@ def _process_one(fpath: Path) -> None:
                 # Fill None pages so every offset maps to a file page (1-based)
                 fill_page = 1
                 new_otp: list[tuple[int, int | None]] = []
-                for off, p in offset_to_page:
-                    if p is not None:
-                        fill_page = p
+                for off, pg in offset_to_page:
+                    if pg is not None:
+                        fill_page = pg
                     new_otp.append((off, fill_page))
                 offset_to_page = new_otp
                 semantic_chunks = chunk_text_semantic(cleaned, group=group, pre_cleaned=True)
