@@ -201,6 +201,18 @@ def _extract_pdf_document(path: Path) -> Document:
         # Drop pdfplumber tables on figure pages; they are usually layout noise, not real tables.
         figure_pages = {f.page for f in out.figure_regions}
         out.table_regions = [t for t in out.table_regions if t.page not in figure_pages]
+        # Dedupe table_regions: pdfplumber sometimes returns the same table multiple times (overlapping detections).
+        # Keep one per (page, canonical data) so we don't get multiple table_summary chunks for the same table.
+        def _table_sig(tr: TableRegion) -> tuple:
+            return (tr.page, tuple(tuple(str(c or "").strip() for c in row) for row in (tr.data or [])))
+        seen: set[tuple] = set()
+        deduped: list[TableRegion] = []
+        for t in out.table_regions:
+            sig = _table_sig(t)
+            if sig not in seen:
+                seen.add(sig)
+                deduped.append(t)
+        out.table_regions = deduped
     finally:
         doc.close()
     return out
