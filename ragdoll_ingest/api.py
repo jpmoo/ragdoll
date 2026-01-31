@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import requests
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
@@ -25,7 +25,7 @@ class QueryRequest(BaseModel):
     prompt: str
     history: str | None = None
     threshold: float = 0.45
-    group: str | None = None  # Optional: specific collection/group to query; if None, searches all
+    group: list[str] | None = None  # Optional: collections to query; if None or empty, searches all
 
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
@@ -146,14 +146,15 @@ def fetch_source(group: str, filename: str) -> FileResponse:
     )
 
 
-def _do_query(prompt: str, history: str | None, threshold: float, group: str | None = None) -> dict[str, Any]:
+def _do_query(prompt: str, history: str | None, threshold: float, group: list[str] | None = None) -> dict[str, Any]:
     """Shared query logic for GET and POST endpoints.
     
     Args:
         prompt: User's query/question
         history: Optional conversation history
         threshold: Minimum similarity score (0.0-1.0)
-        group: Optional specific collection/group to query; if None, searches all collections
+        group: Optional list of collections to query; if None or empty, searches all collections.
+               Results from all specified collections are merged and ranked by similarity only.
     """
     # Combine prompt and history, expand via LLM
     expanded = _expand_query(prompt, history)
@@ -168,16 +169,18 @@ def _do_query(prompt: str, history: str | None, threshold: float, group: str | N
     
     # Determine which groups to search
     all_results: list[dict[str, Any]] = []
-    if group:
-        # Query specific group only
-        groups = [group]
-        # Validate group exists
-        all_groups = _list_sync_groups()
-        if group not in all_groups:
-            raise HTTPException(status_code=404, detail=f"Collection '{group}' not found. Available collections: {all_groups}")
+    all_groups = _list_sync_groups()
+    if group and len(group) > 0:
+        # Query only the specified collections; validate each exists
+        missing = [g for g in group if g not in all_groups]
+        if missing:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Collection(s) not found: {missing}. Available: {all_groups}",
+            )
+        groups = list(group)
     else:
-        # Query all groups
-        groups = _list_sync_groups()
+        groups = all_groups
     
     for group_name in groups:
         conn = _connect(group_name)
@@ -245,14 +248,20 @@ def _do_query(prompt: str, history: str | None, threshold: float, group: str | N
 
 
 @app.get("/query")
-def query_rag_get(prompt: str, history: str | None = None, threshold: float = 0.45, group: str | None = None) -> dict[str, Any]:
+def query_rag_get(
+    prompt: str,
+    history: str | None = None,
+    threshold: float = 0.45,
+    group: list[str] | None = Query(default=None, description="Collections to query; repeat for multiple, or omit for all"),
+) -> dict[str, Any]:
     """Query RAG collections via GET (simple URL format).
     
     Query parameters:
     - prompt: User's query/question (required)
     - history: Optional conversation history
     - threshold: Minimum similarity score (default: 0.45)
-    - group: Optional specific collection/group to query; if absent, searches all collections
+    - group: Optional list of collections (e.g. ?group=a&group=b); if absent, searches all.
+             Results are merged and ranked by similarity; each result includes a "group" field.
     """
     return _do_query(prompt, history, threshold, group)
 
@@ -265,7 +274,9 @@ def query_rag(request: QueryRequest) -> dict[str, Any]:
     - prompt: User's query/question (required)
     - history: Optional conversation history
     - threshold: Minimum similarity score (default: 0.45)
-    - group: Optional specific collection/group to query; if absent, searches all collections
+    - group: Optional list of collection names to query; if null or empty, searches all.
+             Results from all specified collections are merged into one list and ranked by similarity;
+             each result includes a "group" field indicating its collection.
     """
     return _do_query(request.prompt, request.history, request.threshold, request.group)
 
