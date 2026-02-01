@@ -15,6 +15,7 @@ from starlette.requests import Request
 from ragdoll_ingest import config
 from ragdoll_ingest.config import get_env
 from ragdoll_ingest.embedder import embed
+from ragdoll_ingest.interpreters import extract_chunk_semantic_labels
 from ragdoll_ingest.storage import (
     _connect,
     _list_sync_groups,
@@ -25,6 +26,7 @@ from ragdoll_ingest.storage import (
     init_db,
     insert_chunk_at,
     list_sources,
+    reindex_chunks_after_delete,
     update_chunk_full,
     update_chunk_text,
 )
@@ -222,6 +224,77 @@ def api_update_chunk(group: str, chunk_id: int, body: ChunkUpdate):
         )
         conn.commit()
         return {"ok": True, "chunk_id": chunk_id}
+    finally:
+        conn.close()
+
+
+def _join_chunk_with_neighbor(
+    conn, safe_group: str, chunk_id: int, direction: str
+) -> dict:
+    """Join current chunk with above (direction='above') or below (direction='below'). Merges text, re-runs LLM semantic labels, re-embeds, deletes neighbor, reindexes. Returns updated chunk info or raises HTTPException."""
+    current = get_chunk_by_id(conn, chunk_id)
+    if not current:
+        raise HTTPException(status_code=404, detail="Chunk not found")
+    source_id = current["source_id"]
+    idx = current["chunk_index"]
+    chunks = get_chunks_for_source(conn, source_id)
+    if direction == "above":
+        neighbor = next((c for c in chunks if c["chunk_index"] == idx - 1), None)
+        if not neighbor:
+            raise HTTPException(status_code=404, detail="No chunk above to join")
+        merged_text = (neighbor["text"] or "").strip() + "\n\n" + (current["text"] or "").strip()
+        to_delete_id = neighbor["id"]
+        deleted_index = neighbor["chunk_index"]
+    else:
+        neighbor = next((c for c in chunks if c["chunk_index"] == idx + 1), None)
+        if not neighbor:
+            raise HTTPException(status_code=404, detail="No chunk below to join")
+        merged_text = (current["text"] or "").strip() + "\n\n" + (neighbor["text"] or "").strip()
+        to_delete_id = neighbor["id"]
+        deleted_index = neighbor["chunk_index"]
+    labels = extract_chunk_semantic_labels(merged_text, group=safe_group)
+    concept = (labels.get("concept") or "").strip() or None
+    decision_context = (labels.get("decision_context") or "").strip() or None
+    primary_question_answered = (labels.get("primary_question_answered") or "").strip() or None
+    key_signals = labels.get("key_signals") or []
+    chunk_role = (labels.get("chunk_role") or "").strip() or None
+    to_embed = _text_to_embed(merged_text, concept or "", decision_context or "", primary_question_answered or "", key_signals, chunk_role or "")
+    embs = embed([to_embed], group=safe_group)
+    if not embs:
+        raise HTTPException(status_code=500, detail="Embedding failed")
+    delete_chunk(conn, to_delete_id)
+    reindex_chunks_after_delete(conn, source_id, deleted_index)
+    update_chunk_full(
+        conn, chunk_id, merged_text, embs[0],
+        concept=concept, decision_context=decision_context,
+        primary_question_answered=primary_question_answered,
+        key_signals=key_signals if key_signals else None, chunk_role=chunk_role,
+    )
+    return {"ok": True, "chunk_id": chunk_id, "merged_text": merged_text}
+
+
+@app.post("/api/groups/{group}/chunks/{chunk_id}/join-above")
+def api_join_chunk_above(group: str, chunk_id: int):
+    """Merge the chunk above into this chunk (above text + this text), re-run semantic labels and embedding, delete the above chunk."""
+    safe_group = config._sanitize_group(group)
+    conn = _connect(safe_group)
+    try:
+        result = _join_chunk_with_neighbor(conn, safe_group, chunk_id, "above")
+        conn.commit()
+        return result
+    finally:
+        conn.close()
+
+
+@app.post("/api/groups/{group}/chunks/{chunk_id}/join-below")
+def api_join_chunk_below(group: str, chunk_id: int):
+    """Merge the chunk below into this chunk (this text + below text), re-run semantic labels and embedding, delete the below chunk."""
+    safe_group = config._sanitize_group(group)
+    conn = _connect(safe_group)
+    try:
+        result = _join_chunk_with_neighbor(conn, safe_group, chunk_id, "below")
+        conn.commit()
+        return result
     finally:
         conn.close()
 

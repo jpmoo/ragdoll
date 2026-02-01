@@ -719,6 +719,17 @@ def delete_chunk(conn: sqlite3.Connection, chunk_id: int) -> bool:
     return cursor.rowcount > 0
 
 
+def reindex_chunks_after_delete(
+    conn: sqlite3.Connection, source_id: int, deleted_index: int
+) -> None:
+    """Decrement chunk_index for all chunks in this source with chunk_index > deleted_index."""
+    init_db(conn)
+    conn.execute(
+        "UPDATE chunks SET chunk_index = chunk_index - 1 WHERE source_id = ? AND chunk_index > ?",
+        (source_id, deleted_index),
+    )
+
+
 def _list_sync_groups() -> list[str]:
     """Group dirs under DATA_DIR that have ragdoll.db."""
     d = Path(config.DATA_DIR)
