@@ -200,27 +200,28 @@ def api_fetch_source(group: str, path: str):
 
 @app.patch("/api/groups/{group}/chunks/{chunk_id}")
 def api_update_chunk(group: str, chunk_id: int, body: ChunkUpdate):
-    """Update chunk text, semantic fields, and re-embed."""
+    """Update chunk text; re-run LLM for semantic labels and re-embed."""
     safe_group = config._sanitize_group(group)
     conn = _connect(safe_group)
     try:
         row = get_chunk_by_id(conn, chunk_id)
         if not row:
             raise HTTPException(status_code=404, detail="Chunk not found")
-        concept = (body.concept or "").strip()
-        decision_context = (body.decision_context or "").strip()
-        primary_question_answered = (body.primary_question_answered or "").strip()
-        key_signals = body.key_signals or []
-        chunk_role = (body.chunk_role or "").strip()
-        to_embed = _text_to_embed(body.text, concept, decision_context, primary_question_answered, key_signals, chunk_role)
+        labels = extract_chunk_semantic_labels(body.text, group=safe_group)
+        concept = (labels.get("concept") or "").strip() or None
+        decision_context = (labels.get("decision_context") or "").strip() or None
+        primary_question_answered = (labels.get("primary_question_answered") or "").strip() or None
+        key_signals = labels.get("key_signals") or []
+        chunk_role = (labels.get("chunk_role") or "").strip() or None
+        to_embed = _text_to_embed(body.text, concept or "", decision_context or "", primary_question_answered or "", key_signals, chunk_role or "")
         embs = embed([to_embed], group=safe_group)
         if not embs:
             raise HTTPException(status_code=500, detail="Embedding failed")
         update_chunk_full(
             conn, chunk_id, body.text, embs[0],
-            concept=concept or None, decision_context=decision_context or None,
-            primary_question_answered=primary_question_answered or None,
-            key_signals=key_signals if key_signals else None, chunk_role=chunk_role or None,
+            concept=concept, decision_context=decision_context,
+            primary_question_answered=primary_question_answered,
+            key_signals=key_signals if key_signals else None, chunk_role=chunk_role,
         )
         conn.commit()
         return {"ok": True, "chunk_id": chunk_id}
