@@ -232,7 +232,7 @@ def api_update_chunk(group: str, chunk_id: int, body: ChunkUpdate):
 def _join_chunk_with_neighbor(
     conn, safe_group: str, chunk_id: int, direction: str
 ) -> dict:
-    """Join current chunk with above (direction='above') or below (direction='below'). Merges text, re-runs LLM semantic labels, re-embeds, deletes neighbor, reindexes. Returns updated chunk info or raises HTTPException."""
+    """Join current chunk with the previous or next chunk in sequence (by chunk_index). Merges text, re-runs LLM semantic labels, re-embeds, deletes neighbor, reindexes."""
     current = get_chunk_by_id(conn, chunk_id)
     if not current:
         raise HTTPException(status_code=404, detail="Chunk not found")
@@ -240,14 +240,16 @@ def _join_chunk_with_neighbor(
     idx = current["chunk_index"]
     chunks = get_chunks_for_source(conn, source_id)
     if direction == "above":
-        neighbor = next((c for c in chunks if c["chunk_index"] == idx - 1), None)
+        candidates = [c for c in chunks if c["chunk_index"] < idx]
+        neighbor = max(candidates, key=lambda c: c["chunk_index"]) if candidates else None
         if not neighbor:
             raise HTTPException(status_code=404, detail="No chunk above to join")
         merged_text = (neighbor["text"] or "").strip() + "\n\n" + (current["text"] or "").strip()
         to_delete_id = neighbor["id"]
         deleted_index = neighbor["chunk_index"]
     else:
-        neighbor = next((c for c in chunks if c["chunk_index"] == idx + 1), None)
+        candidates = [c for c in chunks if c["chunk_index"] > idx]
+        neighbor = min(candidates, key=lambda c: c["chunk_index"]) if candidates else None
         if not neighbor:
             raise HTTPException(status_code=404, detail="No chunk below to join")
         merged_text = (current["text"] or "").strip() + "\n\n" + (neighbor["text"] or "").strip()
@@ -353,14 +355,20 @@ def api_create_chunk(group: str, source_id: int, body: ChunkCreate):
 
 @app.delete("/api/groups/{group}/chunks/{chunk_id}")
 def api_delete_chunk(group: str, chunk_id: int):
-    """Delete a chunk."""
+    """Delete a chunk and renumber following chunks."""
     safe_group = config._sanitize_group(group)
     conn = _connect(safe_group)
     try:
+        row = get_chunk_by_id(conn, chunk_id)
+        if not row:
+            raise HTTPException(status_code=404, detail="Chunk not found")
+        source_id = row["source_id"]
+        deleted_index = row["chunk_index"]
         ok = delete_chunk(conn, chunk_id)
-        conn.commit()
         if not ok:
             raise HTTPException(status_code=404, detail="Chunk not found")
+        reindex_chunks_after_delete(conn, source_id, deleted_index)
+        conn.commit()
         return {"ok": True}
     finally:
         conn.close()
