@@ -57,9 +57,10 @@ def summarize_document(
     model = config.CHUNK_MODEL
     start_instruction = ""
     if filename and filename.strip():
+        prefix = f"{filename.strip()} is a "
         start_instruction = (
-            f'Start your one sentence with exactly: "{filename.strip()} is a "
-Then complete the sentence (25-35 words total). '
+            f"Start your one sentence with exactly: \"{prefix}\"\n"
+            "Then complete the sentence (25-35 words total). "
         )
     prompt = (
         "Summarize the following document in exactly one sentence. "
