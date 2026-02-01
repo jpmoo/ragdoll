@@ -264,7 +264,7 @@ def _process_one(fpath: Path) -> None:
         _move_to(p, root, config.FAILED_SUBDIR, group)
         return
 
-    # One-sentence document summary (25-35 words) via LLM; prepend to every chunk
+    # One-sentence document summary (25-35 words) via LLM; append bracketed [SUMMARY of filename: ...] to every chunk
     document_text = "\n\n".join(c["text"] for c in chunks_list)
     doc_summary = summarize_document(document_text, group=group, filename=p.name)
     if doc_summary:
