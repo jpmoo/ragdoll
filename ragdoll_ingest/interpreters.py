@@ -35,6 +35,64 @@ def _ollama_text(prompt: str, model: str, group: str = "_root", timeout: int | N
         return None
 
 
+# Max chars of document to send for one-sentence summary (avoids huge prompts)
+DOC_SUMMARY_MAX_CHARS = 12_000
+
+
+def summarize_document(
+    document_text: str,
+    group: str = "_root",
+    filename: str | None = None,
+) -> str:
+    """
+    Produce a one-sentence (25-35 words) summary of the document via LLM.
+    If filename is provided (e.g. "report.pdf"), the sentence must start with
+    "[filename] is a ...". Returns the summary string, or empty string on failure.
+    """
+    if not (document_text and document_text.strip()):
+        return ""
+    text = document_text.strip()
+    if len(text) > DOC_SUMMARY_MAX_CHARS:
+        text = text[:DOC_SUMMARY_MAX_CHARS] + "\n\n[... document truncated ...]"
+    model = config.CHUNK_MODEL
+    start_instruction = ""
+    if filename and filename.strip():
+        start_instruction = (
+            f'Start your one sentence with exactly: "{filename.strip()} is a "
+Then complete the sentence (25-35 words total). '
+        )
+    prompt = (
+        "Summarize the following document in exactly one sentence. "
+        + start_instruction
+        + "Be factual and descriptive. "
+        "Reply with only that one sentence, no preamble or labels.\n\n"
+        "Document:\n\n"
+    ) + text
+    summary = _ollama_text(prompt, model, group)
+    if not summary:
+        return ""
+    summary = summary.strip()
+    # Ensure sentence starts with "[docname].[extension] is a " when filename given
+    if filename and filename.strip():
+        prefix = f"{filename.strip()} is a "
+        if not summary.lower().startswith(prefix.lower()):
+            summary = prefix + summary.lstrip()
+    # Optionally truncate to one sentence / word limit if model over-produced
+    first_sentence = summary.split(". ")[0].strip()
+    if first_sentence and not first_sentence.endswith("."):
+        first_sentence += "."
+    words = first_sentence.split()
+    if not words:
+        summary = first_sentence or summary
+    elif len(words) > 40:
+        tail = words[:35]
+        summary = " ".join(tail) + ("." if tail and not tail[-1].endswith(".") else "")
+    else:
+        summary = first_sentence
+    action_log("summarize_document", model=model, group=group)
+    return summary
+
+
 def interpret_chart(ocr_text: str, group: str = "_root", filename: str | None = None) -> str:
     """
     Qualitative chart summary from OCR of titles, labels, legends. No numeric guessing.

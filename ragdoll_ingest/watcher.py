@@ -17,7 +17,7 @@ from .chunker import _clean_for_chunking, chunk_text, chunk_text_semantic
 from .embedder import embed
 from .garbage_control import filter_chunks
 from .extractors import extract_document, extract_text, ocr_image_bytes
-from .interpreters import interpret_chart, interpret_figure, interpret_table
+from .interpreters import interpret_chart, interpret_figure, interpret_table, summarize_document
 from .router import route_image
 from .storage import (
     _connect,
@@ -263,6 +263,13 @@ def _process_one(fpath: Path) -> None:
         logger.warning("All chunks rejected by garbage control for %s, moving to failed", p)
         _move_to(p, root, config.FAILED_SUBDIR, group)
         return
+
+    # One-sentence document summary (25-35 words) via LLM; prepend to every chunk
+    document_text = "\n\n".join(c["text"] for c in chunks_list)
+    doc_summary = summarize_document(document_text, group=group, filename=p.name)
+    if doc_summary:
+        for c in chunks_list:
+            c["text"] = doc_summary + "\n\n" + c["text"]
 
     action_log("chunk_ok", file=str(p), num_chunks=len(chunks_list), group=group)
     try:
