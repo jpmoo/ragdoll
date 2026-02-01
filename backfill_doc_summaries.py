@@ -41,37 +41,46 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 
-def _strip_trailing_bracketed_summary(text: str) -> str:
-    """
-    Strip trailing "[SUMMARY of ...]" from end of text (after \\n\\n or at end).
-    Returns chunk body without the bracketed summary.
-    """
+_MARKER = "[SUMMARY of "
+
+
+def _strip_one_trailing_summary(text: str) -> str:
+    """Remove the last trailing '[SUMMARY of ...]' block. Works with newlines or spaces."""
     if not text or not text.strip():
         return text
     t = text.rstrip()
-    marker = "\n\n[SUMMARY of "
-    if marker.upper() in t.upper():
-        idx = t.upper().rfind(marker.upper())
-        if idx >= 0 and t[idx:].rstrip().endswith("]"):
-            return t[:idx].rstrip()
-    return text
+    idx = t.upper().rfind(_MARKER.upper())
+    if idx < 0:
+        return text
+    last_rb = t.rfind("]")
+    if last_rb < idx:
+        return text
+    return t[:idx].rstrip()
+
+
+def _strip_all_trailing_summaries(text: str) -> str:
+    """Remove all trailing '[SUMMARY of ...]' blocks (one or many). Returns body only."""
+    if not text or not text.strip():
+        return text
+    current = text.strip()
+    while True:
+        next_ = _strip_one_trailing_summary(current)
+        if next_ == current:
+            break
+        current = next_
+    return current
 
 
 def _has_trailing_bracketed_summary(text: str) -> bool:
-    """True if text ends with \\n\\n[SUMMARY of ...]."""
+    """True if text has one or more trailing [SUMMARY of ...] blocks."""
     if not text or not text.strip():
         return False
-    t = text.rstrip()
-    marker = "\n\n[SUMMARY of "
-    if marker.upper() not in t.upper():
-        return False
-    idx = t.upper().rfind(marker.upper())
-    return idx >= 0 and t[idx:].rstrip().endswith("]")
+    return _strip_all_trailing_summaries(text) != text.strip()
 
 
 def _chunk_body_only(text: str) -> str:
-    """Return chunk body with trailing [SUMMARY of ...] stripped."""
-    return _strip_trailing_bracketed_summary(text)
+    """Return chunk body with all trailing [SUMMARY of ...] stripped."""
+    return _strip_all_trailing_summaries(text)
 
 
 def backfill_one_source(
