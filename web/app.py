@@ -25,6 +25,7 @@ from ragdoll_ingest.storage import (
     init_db,
     insert_chunk_at,
     list_sources,
+    update_chunk_full,
     update_chunk_text,
 )
 
@@ -76,14 +77,40 @@ if REVIEW_USER and REVIEW_PASSWORD:
 
 # --- API ---
 
+def _text_to_embed(text: str, concept: str = "", decision_context: str = "", primary_question_answered: str = "", key_signals: list | None = None, chunk_role: str = "") -> str:
+    """Build string to embed: chunk text plus semantic fields (same as ingest)."""
+    parts = [text or ""]
+    if concept:
+        parts.append("Concept: " + concept)
+    if decision_context:
+        parts.append("Decision context: " + decision_context)
+    if primary_question_answered:
+        parts.append("Primary question answered: " + primary_question_answered)
+    if key_signals:
+        parts.append("Key signals: " + ", ".join(key_signals))
+    if chunk_role:
+        parts.append("Chunk role: " + chunk_role)
+    return "\n\n".join(parts)
+
+
 class ChunkUpdate(BaseModel):
     text: str
+    concept: str | None = None
+    decision_context: str | None = None
+    primary_question_answered: str | None = None
+    key_signals: list[str] | None = None
+    chunk_role: str | None = None
 
 
 class ChunkCreate(BaseModel):
     text: str
     after_index: int | None = None  # insert after this index (new chunk_index = after_index + 1)
     before_index: int | None = None  # insert before this index (new chunk_index = before_index)
+    concept: str | None = None
+    decision_context: str | None = None
+    primary_question_answered: str | None = None
+    key_signals: list[str] | None = None
+    chunk_role: str | None = None
 
 
 @app.get("/api/groups")
@@ -171,17 +198,28 @@ def api_fetch_source(group: str, path: str):
 
 @app.patch("/api/groups/{group}/chunks/{chunk_id}")
 def api_update_chunk(group: str, chunk_id: int, body: ChunkUpdate):
-    """Update chunk text and re-embed."""
+    """Update chunk text, semantic fields, and re-embed."""
     safe_group = config._sanitize_group(group)
     conn = _connect(safe_group)
     try:
         row = get_chunk_by_id(conn, chunk_id)
         if not row:
             raise HTTPException(status_code=404, detail="Chunk not found")
-        embs = embed([body.text], group=safe_group)
+        concept = (body.concept or "").strip()
+        decision_context = (body.decision_context or "").strip()
+        primary_question_answered = (body.primary_question_answered or "").strip()
+        key_signals = body.key_signals or []
+        chunk_role = (body.chunk_role or "").strip()
+        to_embed = _text_to_embed(body.text, concept, decision_context, primary_question_answered, key_signals, chunk_role)
+        embs = embed([to_embed], group=safe_group)
         if not embs:
             raise HTTPException(status_code=500, detail="Embedding failed")
-        update_chunk_text(conn, chunk_id, body.text, embs[0])
+        update_chunk_full(
+            conn, chunk_id, body.text, embs[0],
+            concept=concept or None, decision_context=decision_context or None,
+            primary_question_answered=primary_question_answered or None,
+            key_signals=key_signals if key_signals else None, chunk_role=chunk_role or None,
+        )
         conn.commit()
         return {"ok": True, "chunk_id": chunk_id}
     finally:
@@ -190,7 +228,7 @@ def api_update_chunk(group: str, chunk_id: int, body: ChunkUpdate):
 
 @app.post("/api/groups/{group}/sources/{source_id}/chunks")
 def api_create_chunk(group: str, source_id: int, body: ChunkCreate):
-    """Insert a new chunk above or below an index."""
+    """Insert a new chunk above or below an index, with optional semantic fields."""
     safe_group = config._sanitize_group(group)
     src = get_source_by_id(_connect(safe_group), source_id)
     if not src:
@@ -202,7 +240,13 @@ def api_create_chunk(group: str, source_id: int, body: ChunkCreate):
         at_index = body.before_index
     else:
         at_index = 0
-    embs = embed([body.text], group=safe_group)
+    concept = (body.concept or "").strip()
+    decision_context = (body.decision_context or "").strip()
+    primary_question_answered = (body.primary_question_answered or "").strip()
+    key_signals = body.key_signals or []
+    chunk_role = (body.chunk_role or "").strip()
+    to_embed = _text_to_embed(body.text, concept, decision_context, primary_question_answered, key_signals, chunk_role)
+    embs = embed([to_embed], group=safe_group)
     if not embs:
         raise HTTPException(status_code=500, detail="Embedding failed")
     conn = _connect(safe_group)
@@ -210,6 +254,9 @@ def api_create_chunk(group: str, source_id: int, body: ChunkCreate):
         new_id = insert_chunk_at(
             conn, source_id, source_path, source_type, at_index, body.text, embs[0],
             page=None, artifact_type="text", artifact_path=None,
+            concept=concept or None, decision_context=decision_context or None,
+            primary_question_answered=primary_question_answered or None,
+            key_signals=key_signals if key_signals else None, chunk_role=chunk_role or None,
         )
         conn.commit()
         return {"ok": True, "chunk_id": new_id, "chunk_index": at_index}

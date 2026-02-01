@@ -565,43 +565,71 @@ def get_chunks_for_source(
     conn: sqlite3.Connection, source_id: int, page: int | None = None
 ) -> list[dict]:
     """
-    List chunks for a source. Returns list of dicts with id, chunk_index, text, page, artifact_type.
+    List chunks for a source. Returns list of dicts with id, chunk_index, text, page, artifact_type,
+    concept, decision_context, primary_question_answered, key_signals (list), chunk_role.
     If page is not None, only chunks with that page (or None for page-agnostic) are returned.
     """
     init_db(conn)
     _migrate_sources_table(conn)
+    cols = "id, chunk_index, text, page, artifact_type, concept, decision_context, primary_question_answered, key_signals, chunk_role"
     if page is not None:
         rows = conn.execute(
-            "SELECT id, chunk_index, text, page, artifact_type FROM chunks WHERE source_id = ? AND (page IS NULL OR page = ?) ORDER BY chunk_index",
+            f"SELECT {cols} FROM chunks WHERE source_id = ? AND (page IS NULL OR page = ?) ORDER BY chunk_index",
             (source_id, page),
         ).fetchall()
     else:
         rows = conn.execute(
-            "SELECT id, chunk_index, text, page, artifact_type FROM chunks WHERE source_id = ? ORDER BY chunk_index",
+            f"SELECT {cols} FROM chunks WHERE source_id = ? ORDER BY chunk_index",
             (source_id,),
         ).fetchall()
-    return [
-        {
+    out = []
+    for row in rows:
+        d = {
             "id": row["id"],
             "chunk_index": row["chunk_index"],
             "text": row["text"],
             "page": row["page"],
             "artifact_type": row["artifact_type"] or "text",
         }
-        for row in rows
-    ]
+        for k in ("concept", "decision_context", "primary_question_answered", "chunk_role"):
+            if k in row.keys():
+                v = row[k]
+                d[k] = (v or "").strip() if isinstance(v, str) else ""
+            else:
+                d[k] = ""
+        if "key_signals" in row.keys() and row["key_signals"]:
+            try:
+                d["key_signals"] = json.loads(row["key_signals"])
+                if not isinstance(d["key_signals"], list):
+                    d["key_signals"] = []
+            except (TypeError, json.JSONDecodeError):
+                d["key_signals"] = []
+        else:
+            d["key_signals"] = []
+        out.append(d)
+    return out
 
 
 def get_chunk_by_id(conn: sqlite3.Connection, chunk_id: int) -> dict | None:
-    """Get a single chunk by id. Returns dict with id, source_id, source_path, source_type, chunk_index, text, page, artifact_type, or None."""
+    """Get a single chunk by id. Returns dict with id, source_id, source_path, source_type, chunk_index, text, page, artifact_type, concept, decision_context, primary_question_answered, key_signals, chunk_role, or None."""
     init_db(conn)
     row = conn.execute(
-        "SELECT id, source_id, source_path, source_type, chunk_index, text, page, artifact_type FROM chunks WHERE id = ?",
+        "SELECT id, source_id, source_path, source_type, chunk_index, text, page, artifact_type, concept, decision_context, primary_question_answered, key_signals, chunk_role FROM chunks WHERE id = ?",
         (chunk_id,),
     ).fetchone()
     if not row:
         return None
-    return dict(row)
+    d = dict(row)
+    if "key_signals" in d and d["key_signals"]:
+        try:
+            d["key_signals"] = json.loads(d["key_signals"])
+            if not isinstance(d["key_signals"], list):
+                d["key_signals"] = []
+        except (TypeError, json.JSONDecodeError):
+            d["key_signals"] = []
+    else:
+        d["key_signals"] = []
+    return d
 
 
 def update_chunk_text(
@@ -616,6 +644,31 @@ def update_chunk_text(
     )
 
 
+def update_chunk_full(
+    conn: sqlite3.Connection,
+    chunk_id: int,
+    text: str,
+    embedding: list[float],
+    concept: str | None = None,
+    decision_context: str | None = None,
+    primary_question_answered: str | None = None,
+    key_signals: list[str] | None = None,
+    chunk_role: str | None = None,
+) -> None:
+    """Update chunk text, embedding, and all semantic fields by id."""
+    init_db(conn)
+    text_clean = clean_text(text)
+    concept = (concept or "").strip() or None
+    decision_context = (decision_context or "").strip() or None
+    primary_question_answered = (primary_question_answered or "").strip() or None
+    chunk_role = (chunk_role or "").strip() or None
+    key_signals_json = json.dumps([str(s).strip() for s in (key_signals or []) if str(s).strip()]) if key_signals else None
+    conn.execute(
+        """UPDATE chunks SET text = ?, embedding = ?, concept = ?, decision_context = ?, primary_question_answered = ?, key_signals = ?, chunk_role = ? WHERE id = ?""",
+        (text_clean, json.dumps(embedding), concept, decision_context, primary_question_answered, key_signals_json, chunk_role, chunk_id),
+    )
+
+
 def insert_chunk_at(
     conn: sqlite3.Connection,
     source_id: int,
@@ -627,6 +680,11 @@ def insert_chunk_at(
     page: int | None = None,
     artifact_type: str = "text",
     artifact_path: str | None = None,
+    concept: str | None = None,
+    decision_context: str | None = None,
+    primary_question_answered: str | None = None,
+    key_signals: list[str] | None = None,
+    chunk_role: str | None = None,
 ) -> int:
     """
     Insert a new chunk at chunk_index = at_index. Existing chunks with chunk_index >= at_index are shifted by 1.
@@ -634,13 +692,22 @@ def insert_chunk_at(
     """
     init_db(conn)
     text = clean_text(text)
+    concept = (concept or "").strip() or None
+    decision_context = (decision_context or "").strip() or None
+    primary_question_answered = (primary_question_answered or "").strip() or None
+    chunk_role = (chunk_role or "").strip() or None
+    key_signals_json = json.dumps([str(s).strip() for s in (key_signals or []) if str(s).strip()]) if key_signals else None
     conn.execute(
         "UPDATE chunks SET chunk_index = chunk_index + 1 WHERE source_id = ? AND chunk_index >= ?",
         (source_id, at_index),
     )
     cursor = conn.execute(
-        "INSERT INTO chunks (source_id, source_path, source_type, chunk_index, text, embedding, artifact_type, artifact_path, page) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (source_id, source_path, source_type, at_index, text, json.dumps(embedding), artifact_type, artifact_path, page),
+        """INSERT INTO chunks (source_id, source_path, source_type, chunk_index, text, embedding, artifact_type, artifact_path, page, concept, decision_context, primary_question_answered, key_signals, chunk_role)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            source_id, source_path, source_type, at_index, text, json.dumps(embedding),
+            artifact_type, artifact_path, page, concept, decision_context, primary_question_answered, key_signals_json, chunk_role,
+        ),
     )
     return cursor.lastrowid
 

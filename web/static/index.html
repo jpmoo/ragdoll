@@ -201,8 +201,23 @@
       position: relative;
     }
     .sample-card .meta { font-size: 0.75rem; color: var(--muted); margin-bottom: 0.4rem; }
+    .sample-card .semantic-block { margin-top: 0.5rem; font-size: 0.8rem; }
+    .sample-card .semantic-row { margin-bottom: 0.25rem; }
+    .sample-card .semantic-label { color: var(--muted); margin-right: 0.35rem; }
+    .sample-card .semantic-value { color: var(--text); }
     .sample-card .text { white-space: pre-wrap; word-break: break-word; }
     .sample-card .text.editing { font-style: italic; }
+    .sample-card input[type="text"], .sample-card select {
+      width: 100%;
+      max-width: 100%;
+      padding: 0.25rem 0.4rem;
+      margin-top: 0.15rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 4px;
+      font-size: 0.85rem;
+    }
     .sample-card textarea {
       width: 100%;
       min-height: 80px;
@@ -235,6 +250,40 @@
     .sample-actions button.primary { background: var(--accent); color: var(--bg); border: none; }
     .sample-actions button.primary:hover { background: var(--accent-hover); }
     .empty-state { padding: 2rem; text-align: center; color: var(--muted); }
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.5);
+      z-index: 200;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-overlay.visible { display: flex; }
+    .modal-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      max-width: 520px;
+      width: 90%;
+      max-height: 90vh;
+      overflow: auto;
+    }
+    .modal-box h3 { margin: 0 0 0.75rem 0; font-size: 1rem; }
+    .modal-box .form-row { margin-bottom: 0.5rem; }
+    .modal-box label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 0.2rem; }
+    .modal-box input, .modal-box select, .modal-box textarea {
+      width: 100%;
+      padding: 0.35rem 0.5rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 4px;
+      font: inherit;
+    }
+    .modal-box textarea { min-height: 60px; resize: vertical; }
+    .modal-actions { margin-top: 1rem; display: flex; gap: 0.5rem; justify-content: flex-end; }
     .toast {
       position: fixed;
       bottom: 1rem;
@@ -297,6 +346,50 @@
   </div>
 
   <div id="toast" class="toast" style="display: none;" role="status"></div>
+
+  <div id="addSampleModal" class="modal-overlay" role="dialog" aria-label="Add sample">
+    <div class="modal-box">
+      <h3 id="addSampleTitle">Add sample</h3>
+      <form id="addSampleForm">
+        <div class="form-row">
+          <label for="addText">Chunk text *</label>
+          <textarea id="addText" required></textarea>
+        </div>
+        <div class="form-row">
+          <label for="addConcept">Concept</label>
+          <input type="text" id="addConcept" />
+        </div>
+        <div class="form-row">
+          <label for="addDecisionContext">Decision context</label>
+          <input type="text" id="addDecisionContext" />
+        </div>
+        <div class="form-row">
+          <label for="addPrimaryQuestion">Primary question answered</label>
+          <input type="text" id="addPrimaryQuestion" />
+        </div>
+        <div class="form-row">
+          <label for="addKeySignals">Key signals (one per line)</label>
+          <textarea id="addKeySignals" rows="3"></textarea>
+        </div>
+        <div class="form-row">
+          <label for="addChunkRole">Chunk role</label>
+          <select id="addChunkRole">
+            <option value="">—</option>
+            <option value="definition">definition</option>
+            <option value="framework explanation">framework explanation</option>
+            <option value="diagnostic guidance">diagnostic guidance</option>
+            <option value="action/strategy">action/strategy</option>
+            <option value="example/application">example/application</option>
+            <option value="implications/consequences">implications/consequences</option>
+          </select>
+        </div>
+        <div class="modal-actions">
+          <button type="button" id="addSampleCancel">Cancel</button>
+          <button type="submit" class="primary">Add</button>
+        </div>
+      </form>
+    </div>
+  </div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script>
@@ -489,13 +582,37 @@
       });
     }
 
+    const CHUNK_ROLES = ['definition', 'framework explanation', 'diagnostic guidance', 'action/strategy', 'example/application', 'implications/consequences'];
+
     function sampleCard(c) {
       const pageInfo = c.page != null ? `Page ${c.page}` : '—';
+      const concept = (c.concept || '').trim();
+      const decisionContext = (c.decision_context || '').trim();
+      const primaryQuestion = (c.primary_question_answered || '').trim();
+      const keySignals = Array.isArray(c.key_signals) ? c.key_signals.join('\n') : (c.key_signals || '');
+      const chunkRole = (c.chunk_role || '').trim();
+      const keySignalsDisplay = Array.isArray(c.key_signals) ? c.key_signals.join(', ') : (c.key_signals || '');
+      const semanticRows = [
+        ['Concept', concept],
+        ['Decision context', decisionContext],
+        ['Primary question answered', primaryQuestion],
+        ['Key signals', keySignalsDisplay],
+        ['Chunk role', chunkRole],
+      ].map(([l, v]) => `<div class="semantic-row"><span class="semantic-label">${escapeHtml(l)}:</span><span class="semantic-value">${escapeHtml(v) || '—'}</span></div>`).join('');
+      const roleOptions = CHUNK_ROLES.map(r => `<option value="${escapeHtml(r)}"${r === chunkRole ? ' selected' : ''}>${escapeHtml(r)}</option>`).join('');
       return `
         <div class="sample-card" data-id="${c.id}">
           <div class="meta">#${c.chunk_index} · ${pageInfo} · ${c.artifact_type || 'text'}</div>
+          <div class="semantic-block semantic-view">${semanticRows}</div>
+          <div class="semantic-block semantic-edit" style="display: none;">
+            <div class="semantic-row"><span class="semantic-label">Concept</span><input type="text" data-field="concept" value="${escapeHtml(concept)}" /></div>
+            <div class="semantic-row"><span class="semantic-label">Decision context</span><input type="text" data-field="decision_context" value="${escapeHtml(decisionContext)}" /></div>
+            <div class="semantic-row"><span class="semantic-label">Primary question answered</span><input type="text" data-field="primary_question_answered" value="${escapeHtml(primaryQuestion)}" /></div>
+            <div class="semantic-row"><span class="semantic-label">Key signals (one per line)</span><textarea data-field="key_signals" rows="2">${escapeHtml(keySignals)}</textarea></div>
+            <div class="semantic-row"><span class="semantic-label">Chunk role</span><select data-field="chunk_role"><option value="">—</option>${roleOptions}</select></div>
+          </div>
           <div class="text" data-id="${c.id}">${escapeHtml(c.text)}</div>
-          <textarea data-id="${c.id}" style="display: none;"></textarea>
+          <textarea data-id="${c.id}" class="edit-text" style="display: none;"></textarea>
           <div class="sample-actions">
             <button data-action="edit" data-id="${c.id}">Edit</button>
             <button data-action="insertAbove" data-id="${c.id}" data-index="${c.chunk_index}">Insert above</button>
@@ -517,26 +634,43 @@
       const chunkId = id;
       const chunkIndex = parseInt(index, 10);
 
+      function getSemanticFromCard(card) {
+        const editBlock = card.querySelector('.semantic-edit');
+        if (!editBlock) return {};
+        const concept = (editBlock.querySelector('[data-field="concept"]')?.value || '').trim();
+        const decision_context = (editBlock.querySelector('[data-field="decision_context"]')?.value || '').trim();
+        const primary_question_answered = (editBlock.querySelector('[data-field="primary_question_answered"]')?.value || '').trim();
+        const key_signalsRaw = (editBlock.querySelector('[data-field="key_signals"]')?.value || '').trim();
+        const key_signals = key_signalsRaw ? key_signalsRaw.split(/\n/).map(s => s.trim()).filter(Boolean) : [];
+        const chunk_role = (editBlock.querySelector('[data-field="chunk_role"]')?.value || '').trim();
+        return { concept, decision_context, primary_question_answered, key_signals, chunk_role };
+      }
+
       if (action === 'edit') {
         const card = qs(`.sample-card[data-id="${chunkId}"]`);
         const textEl = card.querySelector('.text');
-        const ta = card.querySelector('textarea');
-        if (ta.style.display === 'block') {
+        const ta = card.querySelector('.edit-text');
+        const semanticView = card.querySelector('.semantic-view');
+        const semanticEdit = card.querySelector('.semantic-edit');
+        if (ta && ta.style.display === 'block') {
           const newText = ta.value.trim();
-          if (newText === textEl.textContent.trim()) { ta.style.display = 'none'; textEl.style.display = 'block'; return; }
+          const semantic = getSemanticFromCard(card);
           try {
             const r = await fetch(API + `/groups/${group}/chunks/${chunkId}`, {
               method: 'PATCH',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ text: newText }),
+              body: JSON.stringify({ text: newText, ...semantic }),
             });
             if (!r.ok) throw new Error();
             textEl.textContent = newText;
             ta.style.display = 'none';
             textEl.style.display = 'block';
+            if (semanticView) semanticView.style.display = 'block';
+            if (semanticEdit) semanticEdit.style.display = 'none';
             card.querySelector('[data-action="saveEdit"]').textContent = 'Edit';
             card.querySelector('[data-action="saveEdit"]').dataset.action = 'edit';
             toast('Saved.');
+            loadChunks();
           } catch (e) {
             toast('Failed to save.');
           }
@@ -545,6 +679,8 @@
         ta.value = textEl.textContent;
         textEl.style.display = 'none';
         ta.style.display = 'block';
+        if (semanticView) semanticView.style.display = 'none';
+        if (semanticEdit) semanticEdit.style.display = 'block';
         ta.focus();
         const saveBtn = card.querySelector('[data-action="edit"]');
         saveBtn.textContent = 'Save';
@@ -555,21 +691,27 @@
       if (action === 'saveEdit') {
         const card = qs(`.sample-card[data-id="${chunkId}"]`);
         const textEl = card.querySelector('.text');
-        const ta = card.querySelector('textarea');
+        const ta = card.querySelector('.edit-text');
+        const semanticView = card.querySelector('.semantic-view');
+        const semanticEdit = card.querySelector('.semantic-edit');
         const newText = ta.value.trim();
+        const semantic = getSemanticFromCard(card);
         try {
           const r = await fetch(API + `/groups/${group}/chunks/${chunkId}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: newText }),
+            body: JSON.stringify({ text: newText, ...semantic }),
           });
           if (!r.ok) throw new Error();
           textEl.textContent = newText;
           ta.style.display = 'none';
           textEl.style.display = 'block';
+          if (semanticView) semanticView.style.display = 'block';
+          if (semanticEdit) semanticEdit.style.display = 'none';
           card.querySelector('[data-action="saveEdit"]').textContent = 'Edit';
           card.querySelector('[data-action="saveEdit"]').dataset.action = 'edit';
           toast('Saved.');
+          loadChunks();
         } catch (e) {
           toast('Failed to save.');
         }
@@ -577,20 +719,10 @@
       }
 
       if (action === 'insertAbove' || action === 'insertBelow') {
-        const text = prompt('New sample text:');
-        if (text == null || !text.trim()) return;
-        const body = action === 'insertAbove' ? { text: text.trim(), before_index: chunkIndex } : { text: text.trim(), after_index: chunkIndex };
-        try {
-          await fetch(API + `/groups/${group}/sources/${state.sourceId}/chunks`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
-          });
-          toast('Inserted.');
-          loadChunks();
-        } catch (e) {
-          toast('Failed to insert.');
-        }
+        state.addSampleMode = action === 'insertAbove' ? { type: 'above', index: chunkIndex } : { type: 'below', index: chunkIndex };
+        qs('#addSampleTitle').textContent = action === 'insertAbove' ? 'Insert sample above' : 'Insert sample below';
+        qs('#addSampleForm').reset();
+        qs('#addSampleModal').classList.add('visible');
         return;
       }
 
@@ -628,51 +760,60 @@
       if (state.pdfDoc && state.currentPdfPage < state.pdfNumPages) setPdfPage(state.currentPdfPage + 1);
     });
 
-    async function addSampleAtTop() {
+    function openAddSampleModal(mode) {
       if (!state.group || state.sourceId == null) {
         toast('Select a source first.');
         return;
       }
-      const text = prompt('New sample text (insert at top):');
-      if (text == null || !text.trim()) return;
-      try {
-        await fetch(API + `/groups/${encodeURIComponent(state.group)}/sources/${state.sourceId}/chunks`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: text.trim(), before_index: 0 }),
-        });
-        toast('Added at top.');
-        loadChunks();
-      } catch (e) {
-        toast('Failed to add.');
-      }
+      state.addSampleMode = mode;
+      qs('#addSampleTitle').textContent = mode.type === 'top' ? 'Add sample at top' : mode.type === 'bottom' ? 'Add sample at bottom' : mode.type === 'above' ? 'Insert sample above' : 'Insert sample below';
+      qs('#addSampleForm').reset();
+      qs('#addSampleModal').classList.add('visible');
     }
 
-    async function addSampleAtBottom() {
-      if (!state.group || state.sourceId == null) {
-        toast('Select a source first.');
+    qs('#addSampleCancel').addEventListener('click', () => {
+      qs('#addSampleModal').classList.remove('visible');
+      state.addSampleMode = null;
+    });
+
+    qs('#addSampleForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const mode = state.addSampleMode;
+      if (!mode || !state.group || state.sourceId == null) return;
+      const text = (qs('#addText').value || '').trim();
+      if (!text) {
+        toast('Chunk text is required.');
         return;
       }
-      const text = prompt('New sample text (insert at bottom):');
-      if (text == null || !text.trim()) return;
-      const body = state.chunks.length
-        ? { text: text.trim(), after_index: Math.max(...state.chunks.map(c => c.chunk_index)) }
-        : { text: text.trim() };
+      const concept = (qs('#addConcept').value || '').trim();
+      const decision_context = (qs('#addDecisionContext').value || '').trim();
+      const primary_question_answered = (qs('#addPrimaryQuestion').value || '').trim();
+      const key_signalsRaw = (qs('#addKeySignals').value || '').trim();
+      const key_signals = key_signalsRaw ? key_signalsRaw.split(/\n/).map(s => s.trim()).filter(Boolean) : [];
+      const chunk_role = (qs('#addChunkRole').value || '').trim();
+      let body = { text, concept: concept || null, decision_context: decision_context || null, primary_question_answered: primary_question_answered || null, key_signals: key_signals.length ? key_signals : null, chunk_role: chunk_role || null };
+      if (mode.type === 'top') body.before_index = 0;
+      else if (mode.type === 'bottom') body.after_index = state.chunks.length ? Math.max(...state.chunks.map(c => c.chunk_index)) : undefined;
+      else if (mode.type === 'above') body.before_index = mode.index;
+      else if (mode.type === 'below') body.after_index = mode.index;
       try {
-        await fetch(API + `/groups/${encodeURIComponent(state.group)}/sources/${state.sourceId}/chunks`, {
+        const r = await fetch(API + `/groups/${encodeURIComponent(state.group)}/sources/${state.sourceId}/chunks`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
         });
-        toast('Added at bottom.');
+        if (!r.ok) throw new Error();
+        qs('#addSampleModal').classList.remove('visible');
+        state.addSampleMode = null;
+        toast('Added.');
         loadChunks();
       } catch (e) {
         toast('Failed to add.');
       }
-    }
+    });
 
-    qs('#addAtTop').addEventListener('click', addSampleAtTop);
-    qs('#addAtBottom').addEventListener('click', addSampleAtBottom);
+    qs('#addAtTop').addEventListener('click', () => openAddSampleModal({ type: 'top' }));
+    qs('#addAtBottom').addEventListener('click', () => openAddSampleModal({ type: 'bottom' }));
 
     loadGroups();
   </script>
