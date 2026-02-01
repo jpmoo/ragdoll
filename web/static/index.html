@@ -176,6 +176,17 @@
     }
     .samples-toolbar label { display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; color: var(--muted); }
     .samples-toolbar input[type="number"] { width: 4rem; padding: 0.3rem 0.5rem; border-radius: 4px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+    .samples-toolbar .toolbar-add {
+      margin-left: auto;
+      padding: 0.3rem 0.6rem;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+      font-size: 0.85rem;
+      cursor: pointer;
+    }
+    .samples-toolbar .toolbar-add:hover { background: var(--accent); color: var(--bg); border-color: var(--accent); }
     .samples-list {
       flex: 1;
       overflow: auto;
@@ -276,6 +287,8 @@
       <div class="samples-toolbar">
         <label><input type="radio" name="filter" value="all" checked> All samples</label>
         <label><input type="radio" name="filter" value="page"> Page <input type="number" id="pageNum" min="1" value="1" aria-label="Page number"></label>
+        <button type="button" id="addAtTop" class="toolbar-add">Add at top</button>
+        <button type="button" id="addAtBottom" class="toolbar-add">Add at bottom</button>
       </div>
       <div class="samples-list" id="samplesList">
         <div class="empty-state">Select a source to list samples.</div>
@@ -614,6 +627,52 @@
     qs('#pdfNext').addEventListener('click', function() {
       if (state.pdfDoc && state.currentPdfPage < state.pdfNumPages) setPdfPage(state.currentPdfPage + 1);
     });
+
+    async function addSampleAtTop() {
+      if (!state.group || state.sourceId == null) {
+        toast('Select a source first.');
+        return;
+      }
+      const text = prompt('New sample text (insert at top):');
+      if (text == null || !text.trim()) return;
+      try {
+        await fetch(API + `/groups/${encodeURIComponent(state.group)}/sources/${state.sourceId}/chunks`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: text.trim(), before_index: 0 }),
+        });
+        toast('Added at top.');
+        loadChunks();
+      } catch (e) {
+        toast('Failed to add.');
+      }
+    }
+
+    async function addSampleAtBottom() {
+      if (!state.group || state.sourceId == null) {
+        toast('Select a source first.');
+        return;
+      }
+      const text = prompt('New sample text (insert at bottom):');
+      if (text == null || !text.trim()) return;
+      const body = state.chunks.length
+        ? { text: text.trim(), after_index: Math.max(...state.chunks.map(c => c.chunk_index)) }
+        : { text: text.trim() };
+      try {
+        await fetch(API + `/groups/${encodeURIComponent(state.group)}/sources/${state.sourceId}/chunks`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        toast('Added at bottom.');
+        loadChunks();
+      } catch (e) {
+        toast('Failed to add.');
+      }
+    }
+
+    qs('#addAtTop').addEventListener('click', addSampleAtTop);
+    qs('#addAtBottom').addEventListener('click', addSampleAtBottom);
 
     loadGroups();
   </script>
