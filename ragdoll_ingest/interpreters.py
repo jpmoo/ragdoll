@@ -1,11 +1,22 @@
 """LLM interpreters for charts and tables. Produce qualitative summaries only; no numeric guessing. Anti-hallucination."""
 
+import json
 import logging
+import re
 
 from . import config
 from .action_log import log as action_log
 
 logger = logging.getLogger(__name__)
+
+CHUNK_ROLES = (
+    "definition",
+    "framework explanation",
+    "diagnostic guidance",
+    "action/strategy",
+    "example/application",
+    "implications/consequences",
+)
 
 AUTH = (
     "Do not invent values, steps, or relationships. If something is unclear, say so. "
@@ -81,6 +92,78 @@ def summarize_document(
             summary += "."
     action_log("summarize_document", model=model, group=group)
     return summary
+
+
+# Max chars of chunk text to send for semantic labels (avoid huge prompts)
+CHUNK_SEMANTIC_MAX_CHARS = 8000
+
+
+def extract_chunk_semantic_labels(chunk_text: str, group: str = "_root") -> dict:
+    """
+    Ask LLM for semantic labels for a chunk. Returns dict with: concept, decision_context,
+    primary_question_answered, key_signals (list), chunk_role. Any field may be empty if
+    LLM returns garbage or omits. chunk_role must be one of CHUNK_ROLES or empty.
+    """
+    out = {
+        "concept": "",
+        "decision_context": "",
+        "primary_question_answered": "",
+        "key_signals": [],
+        "chunk_role": "",
+    }
+    if not (chunk_text and chunk_text.strip()):
+        return out
+    text = chunk_text.strip()
+    if len(text) > CHUNK_SEMANTIC_MAX_CHARS:
+        text = text[:CHUNK_SEMANTIC_MAX_CHARS] + "\n\n[... truncated ...]"
+    roles_str = ", ".join(CHUNK_ROLES)
+    prompt = (
+        "For the following text chunk, extract semantic labels. "
+        "Reply with ONLY valid JSON in this exact format, no other text:\n"
+        '{"concept": "main concept as a short label", '
+        '"decision_context": "main area of work where this chunk would be useful (e.g. organizational improvement planning)", '
+        '"primary_question_answered": "single main question this chunk might answer", '
+        '"key_signals": ["condition 1", "condition 2", "..."], '
+        '"chunk_role": "exactly one of: ' + roles_str + '"}\n\n'
+        "Use empty string or empty array for any field you cannot determine. "
+        "chunk_role must be exactly one of: " + roles_str + ". "
+        "key_signals: 3-5 short conditions that would make this chunk relevant (e.g. teachers are exhausted).\n\n"
+        "Chunk text:\n\n"
+    ) + text
+    model = config.CHUNK_MODEL
+    resp = _ollama_text(prompt, model, group)
+    if not resp:
+        return out
+    resp = resp.strip()
+    if "```" in resp:
+        m = re.search(r"```(?:json)?\s*([\s\S]*?)```", resp)
+        if m:
+            resp = m.group(1).strip()
+    try:
+        obj = json.loads(resp)
+    except json.JSONDecodeError:
+        return out
+    if not isinstance(obj, dict):
+        return out
+    concept = obj.get("concept")
+    if isinstance(concept, str) and concept.strip():
+        out["concept"] = concept.strip()
+    decision_context = obj.get("decision_context")
+    if isinstance(decision_context, str) and decision_context.strip():
+        out["decision_context"] = decision_context.strip()
+    primary_question_answered = obj.get("primary_question_answered")
+    if isinstance(primary_question_answered, str) and primary_question_answered.strip():
+        out["primary_question_answered"] = primary_question_answered.strip()
+    key_signals = obj.get("key_signals")
+    if isinstance(key_signals, list):
+        out["key_signals"] = [str(s).strip() for s in key_signals if str(s).strip()][:10]
+    chunk_role = obj.get("chunk_role")
+    if isinstance(chunk_role, str):
+        chunk_role = chunk_role.strip().lower()
+        if chunk_role in CHUNK_ROLES:
+            out["chunk_role"] = chunk_role
+    action_log("extract_chunk_semantic_labels", model=model, group=group)
+    return out
 
 
 def interpret_chart(ocr_text: str, group: str = "_root", filename: str | None = None) -> str:

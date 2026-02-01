@@ -86,7 +86,7 @@ def _get_semantic_chunk_texts_one(
 ) -> list[tuple[str, int]]:
     """Ask LLM for semantic chunks as text. Returns list of (chunk_text, start_offset) by locating each chunk in window_text."""
     prompt = (
-        "Split the following text into coherent semantic chunks. "
+        "Split the following text into coherent semantic chunks. Prefer longer, self-contained sections where possible. "
         "Each chunk must be a self-contained unit that includes the full content: if a section has a heading (e.g. 'Key phases:'), "
         "include that heading AND all paragraphs and bullet lists under it in the same chunk. "
         "Never output a chunk that is only a heading or title without the content that follows. "

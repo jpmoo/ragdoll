@@ -186,9 +186,14 @@ def _do_query(prompt: str, history: str | None, threshold: float, group: list[st
         conn = _connect(group_name)
         try:
             init_db(conn)
-            rows = conn.execute(
-                "SELECT source_path, source_type, chunk_index, text, embedding, artifact_type, artifact_path, page FROM chunks"
-            ).fetchall()
+            try:
+                rows = conn.execute(
+                    "SELECT source_path, source_type, chunk_index, text, embedding, artifact_type, artifact_path, page, primary_question_answered FROM chunks"
+                ).fetchall()
+            except Exception:
+                rows = conn.execute(
+                    "SELECT source_path, source_type, chunk_index, text, embedding, artifact_type, artifact_path, page FROM chunks"
+                ).fetchall()
             
             for row in rows:
                 try:
@@ -218,6 +223,11 @@ def _do_query(prompt: str, history: str | None, threshold: float, group: list[st
                         except Exception as e:
                             logger.warning("Could not build fetch URL for %s: %s", source_path, e)
                             fetch_url = None
+                        pq = None
+                        if "primary_question_answered" in row.keys():
+                            pq = row["primary_question_answered"] or None
+                            if pq and isinstance(pq, str):
+                                pq = pq.strip() or None
                         all_results.append({
                             "group": group_name,
                             "source_path": source_path,
@@ -226,6 +236,7 @@ def _do_query(prompt: str, history: str | None, threshold: float, group: list[st
                             "source_url": fetch_url,
                             "chunk_index": row["chunk_index"],
                             "text": clean_text(row["text"]),
+                            "primary_question_answered": pq,
                             "artifact_type": row["artifact_type"] or "text",
                             "artifact_path": row["artifact_path"],
                             "page": row["page"],

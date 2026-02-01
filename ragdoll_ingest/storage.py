@@ -360,6 +360,11 @@ def init_db(conn: sqlite3.Connection) -> None:
         ("artifact_type", "TEXT DEFAULT 'text'"),
         ("artifact_path", "TEXT"),
         ("page", "INTEGER"),
+        ("concept", "TEXT"),
+        ("decision_context", "TEXT"),
+        ("primary_question_answered", "TEXT"),
+        ("key_signals", "TEXT"),
+        ("chunk_role", "TEXT"),
     ]:
         try:
             conn.execute(f"ALTER TABLE chunks ADD COLUMN {col} {defn}")
@@ -471,9 +476,9 @@ def add_chunks(
     chunks: list[dict],
 ) -> None:
     """
-    chunks: list of {text, embedding, artifact_type?, artifact_path?, page?}.
-    Defaults: artifact_type='text', artifact_path=None, page=None.
-    Note: key phrases are now embedded in the text field itself (appended as "Key terms: ...").
+    chunks: list of {text, embedding, artifact_type?, artifact_path?, page?,
+    concept?, decision_context?, primary_question_answered?, key_signals?, chunk_role?}.
+    key_signals: list of str (stored as JSON array string).
     """
     init_db(conn)
     source_id = _get_or_create_source(conn, source_path, source_type)
@@ -483,9 +488,23 @@ def add_chunks(
         atype = c.get("artifact_type", "text")
         apath = c.get("artifact_path")
         page = c.get("page")
+        concept = (c.get("concept") or "").strip() or None
+        decision_context = (c.get("decision_context") or "").strip() or None
+        primary_question_answered = (c.get("primary_question_answered") or "").strip() or None
+        key_signals_raw = c.get("key_signals")
+        if isinstance(key_signals_raw, list):
+            key_signals = json.dumps([str(s).strip() for s in key_signals_raw if str(s).strip()]) or None
+        else:
+            key_signals = (key_signals_raw or "").strip() or None
+        chunk_role = (c.get("chunk_role") or "").strip() or None
         conn.execute(
-            "INSERT INTO chunks (source_id, source_path, source_type, chunk_index, text, embedding, artifact_type, artifact_path, page) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (source_id, source_path, source_type, i, text, json.dumps(emb), atype, apath, page),
+            """INSERT INTO chunks (source_id, source_path, source_type, chunk_index, text, embedding,
+               artifact_type, artifact_path, page, concept, decision_context, primary_question_answered, key_signals, chunk_role)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                source_id, source_path, source_type, i, text, json.dumps(emb),
+                atype, apath, page, concept, decision_context, primary_question_answered, key_signals, chunk_role,
+            ),
         )
 
 

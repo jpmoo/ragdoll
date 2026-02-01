@@ -17,7 +17,13 @@ from .chunker import _clean_for_chunking, chunk_text, chunk_text_semantic
 from .embedder import embed
 from .garbage_control import filter_chunks
 from .extractors import extract_document, extract_text, ocr_image_bytes
-from .interpreters import interpret_chart, interpret_figure, interpret_table, summarize_document
+from .interpreters import (
+    extract_chunk_semantic_labels,
+    interpret_chart,
+    interpret_figure,
+    interpret_table,
+    summarize_document,
+)
 from .router import route_image
 from .storage import (
     _connect,
@@ -264,17 +270,68 @@ def _process_one(fpath: Path) -> None:
         _move_to(p, root, config.FAILED_SUBDIR, group)
         return
 
-    # One-sentence document summary (25-35 words) via LLM; append bracketed [SUMMARY of filename: ...] to every chunk
+    # Semantic labels per chunk (concept, decision_context, primary_question_answered, key_signals, chunk_role)
+    def _meaningful_word_count(text: str) -> int:
+        if not text or not text.strip():
+            return 0
+        words = [w for w in text.strip().split() if len(w) >= 2 and w.isalpha()]
+        return len(words)
+
+    def _has_any_semantic_labels(labels: dict) -> bool:
+        return bool(
+            labels.get("concept") or labels.get("decision_context")
+            or labels.get("primary_question_answered") or labels.get("key_signals") or labels.get("chunk_role")
+        )
+
+    def _should_discard_chunk(chunk: dict) -> bool:
+        text = (chunk.get("text") or "").strip()
+        if len(text) >= 50:
+            return False
+        if _has_any_semantic_labels(chunk):
+            return False
+        if _meaningful_word_count(text) >= 3:
+            return False
+        return True
+
+    for c in chunks_list:
+        labels = extract_chunk_semantic_labels(c["text"], group=group)
+        c["concept"] = labels.get("concept") or ""
+        c["decision_context"] = labels.get("decision_context") or ""
+        c["primary_question_answered"] = labels.get("primary_question_answered") or ""
+        c["key_signals"] = labels.get("key_signals") or []
+        c["chunk_role"] = labels.get("chunk_role") or ""
+    chunks_list = [c for c in chunks_list if not _should_discard_chunk(c)]
+
+    if not chunks_list:
+        action_log("chunk_all_rejected", file=str(p), reason="semantic_discard", group=group)
+        _move_to(p, root, config.FAILED_SUBDIR, group)
+        return
+
+    # Document summary: only on first chunk; when creating it, first chunk already has semantic labels
     document_text = "\n\n".join(c["text"] for c in chunks_list)
     doc_summary = summarize_document(document_text, group=group, filename=p.name)
-    if doc_summary:
+    if doc_summary and chunks_list:
         suffix = "\n\n[SUMMARY of " + p.name + ": " + doc_summary + "]"
-        for c in chunks_list:
-            c["text"] = c["text"] + suffix
+        chunks_list[0]["text"] = chunks_list[0]["text"] + suffix
+
+    def _text_to_embed(c: dict) -> str:
+        """Chunk text plus semantic fields so the embedding captures labels too."""
+        parts = [c["text"]]
+        if c.get("concept"):
+            parts.append("Concept: " + c["concept"])
+        if c.get("decision_context"):
+            parts.append("Decision context: " + c["decision_context"])
+        if c.get("primary_question_answered"):
+            parts.append("Primary question answered: " + c["primary_question_answered"])
+        if c.get("key_signals"):
+            parts.append("Key signals: " + ", ".join(c["key_signals"]))
+        if c.get("chunk_role"):
+            parts.append("Chunk role: " + c["chunk_role"])
+        return "\n\n".join(parts)
 
     action_log("chunk_ok", file=str(p), num_chunks=len(chunks_list), group=group)
     try:
-        embs = embed([c["text"] for c in chunks_list], group=group)
+        embs = embed([_text_to_embed(c) for c in chunks_list], group=group)
     except Exception as e:
         action_log("embed_fail", file=str(p), error=str(e), group=group)
         logger.exception("Embed failed for %s: %s", p, e)
