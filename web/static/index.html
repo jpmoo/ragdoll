@@ -600,8 +600,6 @@
         ['Chunk role', chunkRole],
       ].map(([l, v]) => `<div class="semantic-row"><span class="semantic-label">${escapeHtml(l)}:</span><span class="semantic-value">${escapeHtml(v) || '—'}</span></div>`).join('');
       const roleOptions = CHUNK_ROLES.map(r => `<option value="${escapeHtml(r)}"${r === chunkRole ? ' selected' : ''}>${escapeHtml(r)}</option>`).join('');
-      const hasAbove = state.chunks.some(ch => ch.chunk_index === c.chunk_index - 1);
-      const hasBelow = state.chunks.some(ch => ch.chunk_index === c.chunk_index + 1);
       return `
         <div class="sample-card" data-id="${c.id}">
           <div class="meta">#${c.chunk_index} · ${pageInfo} · ${c.artifact_type || 'text'}</div>
@@ -617,8 +615,8 @@
           <textarea data-id="${c.id}" class="edit-text" style="display: none;"></textarea>
           <div class="sample-actions">
             <button data-action="edit" data-id="${c.id}">Edit</button>
-            <button data-action="joinAbove" data-id="${c.id}" ${hasAbove ? '' : 'disabled'}>Join with above</button>
-            <button data-action="joinBelow" data-id="${c.id}" ${hasBelow ? '' : 'disabled'}>Join with below</button>
+            <button data-action="joinAbove" data-id="${c.id}">Join with above</button>
+            <button data-action="joinBelow" data-id="${c.id}">Join with below</button>
             <button data-action="insertAbove" data-id="${c.id}" data-index="${c.chunk_index}">Insert above</button>
             <button data-action="insertBelow" data-id="${c.id}" data-index="${c.chunk_index}">Insert below</button>
             <button data-action="delete" data-id="${c.id}" class="danger">Delete</button>
