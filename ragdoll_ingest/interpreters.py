@@ -46,8 +46,8 @@ def summarize_document(
 ) -> str:
     """
     Produce a one-sentence (25-35 words) summary of the document via LLM.
-    If filename is provided (e.g. "report.pdf"), the sentence must start with
-    "[filename] is a ...". Returns the summary string, or empty string on failure.
+    Returns the summary string only (no prefix). Caller prepends "SUMMARY: " when
+    storing. Returns empty string on failure.
     """
     if not (document_text and document_text.strip()):
         return ""
@@ -55,30 +55,18 @@ def summarize_document(
     if len(text) > DOC_SUMMARY_MAX_CHARS:
         text = text[:DOC_SUMMARY_MAX_CHARS] + "\n\n[... document truncated ...]"
     model = config.CHUNK_MODEL
-    start_instruction = ""
-    if filename and filename.strip():
-        prefix = f"{filename.strip()} is a "
-        start_instruction = (
-            f"Start your one sentence with exactly: \"{prefix}\"\n"
-            "Then complete the sentence (25-35 words total). "
-        )
+    filename_context = f"Document filename: {filename.strip()}\n\n" if filename and filename.strip() else ""
     prompt = (
-        "Summarize the following document in exactly one sentence. "
-        + start_instruction
-        + "Be factual and descriptive. "
-        "Reply with only that one sentence, no preamble or labels.\n\n"
+        "Summarize the following document in exactly one sentence (25-35 words). "
+        "Be factual and descriptive. Reply with only that one sentence, no preamble or labels.\n\n"
+        f"{filename_context}"
         "Document:\n\n"
     ) + text
     summary = _ollama_text(prompt, model, group)
     if not summary:
         return ""
     summary = summary.strip()
-    # Ensure sentence starts with "[docname].[extension] is a " when filename given
-    if filename and filename.strip():
-        prefix = f"{filename.strip()} is a "
-        if not summary.lower().startswith(prefix.lower()):
-            summary = prefix + summary.lstrip()
-    # Optionally truncate to one sentence / word limit if model over-produced
+    # Truncate to one sentence / word limit if model over-produced
     first_sentence = summary.split(". ")[0].strip()
     if first_sentence and not first_sentence.endswith("."):
         first_sentence += "."

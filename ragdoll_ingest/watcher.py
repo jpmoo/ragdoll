@@ -268,8 +268,9 @@ def _process_one(fpath: Path) -> None:
     document_text = "\n\n".join(c["text"] for c in chunks_list)
     doc_summary = summarize_document(document_text, group=group, filename=p.name)
     if doc_summary:
+        suffix = "\n\n[SUMMARY of " + p.name + ": " + doc_summary + "]"
         for c in chunks_list:
-            c["text"] = doc_summary + "\n\n" + c["text"]
+            c["text"] = c["text"] + suffix
 
     action_log("chunk_ok", file=str(p), num_chunks=len(chunks_list), group=group)
     try:

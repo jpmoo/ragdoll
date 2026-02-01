@@ -38,36 +38,77 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 
-def _strip_leading_doc_summary(text: str, filename: str) -> str:
+SUMMARY_OF_PREFIX = "SUMMARY of "  # leading line or bracketed: "[SUMMARY of filename: ...]"
+
+
+def _strip_trailing_bracketed_summary(text: str) -> str:
     """
-    If text starts with "[filename] is a ... ." (and optional \\n\\n), return
-    the rest (chunk body). Otherwise return text unchanged.
+    Strip trailing "[SUMMARY of ...]" from end of text (after \\n\\n or at end).
+    Returns chunk body without the bracketed summary.
     """
-    if not text or not filename:
+    if not text or not text.strip():
         return text
-    prefix = f"{filename} is a "
-    if not text.strip().lower().startswith(prefix.lower()):
+    t = text.rstrip()
+    # Look for \n\n[SUMMARY of ...] at the end
+    marker = "\n\n[SUMMARY of "
+    if marker.upper() in t.upper():
+        idx = t.upper().rfind(marker.upper())
+        if idx >= 0 and t[idx:].rstrip().endswith("]"):
+            return t[:idx].rstrip()
+    return text
+
+
+def _strip_leading_summary_line(text: str, filename: str | None = None) -> str:
+    """
+    Strip a leading summary line and return the chunk body. Removes either:
+    - "SUMMARY of filename: ..." (first line if it starts with SUMMARY of )
+    - "[filename] is a ... ." (first sentence when filename is provided)
+    Otherwise return text unchanged.
+    """
+    if not text or not text.strip():
         return text
-    rest = text[len(prefix) :].lstrip()
-    # First sentence ends at ". " or ".\n"
-    for end in (".\n\n", ". ", ".\n"):
-        idx = rest.find(end)
+    t = text.strip()
+    # Strip "SUMMARY of filename: sentence." (first line up to newline)
+    if t.upper().startswith(SUMMARY_OF_PREFIX.upper()):
+        idx = t.find(": ")
         if idx >= 0:
-            return rest[idx + len(end) :].lstrip()
-    # No period found; rest is the single sentence, use empty body for prepend
-    return ""
+            after = t[idx + 2 :].lstrip()
+            nn = after.find("\n\n")
+            if nn >= 0:
+                return after[nn + 2 :].lstrip()
+            n = after.find("\n")
+            if n >= 0:
+                return after[n + 1 :].lstrip()
+            return ""  # whole chunk was just the summary line
+    # Strip "[filename] is a ... ." when filename given
+    if filename:
+        prefix = f"{filename} is a "
+        if t.lower().startswith(prefix.lower()):
+            rest = t[len(prefix) :].lstrip()
+            for end in (".\n\n", ". ", ".\n"):
+                idx = rest.find(end)
+                if idx >= 0:
+                    return rest[idx + len(end) :].lstrip()
+            return ""
+    return text
 
 
-def _body_for_document_text(text: str, filename: str) -> str:
-    """Return chunk content to include in document text (strip existing summary line)."""
-    stripped = _strip_leading_doc_summary(text, filename)
-    return stripped if stripped else text
+def _chunk_body_only(text: str, filename: str | None = None) -> str:
+    """Return chunk body with any leading or trailing summary stripped."""
+    t = _strip_leading_summary_line(text, filename)
+    t = _strip_trailing_bracketed_summary(t)
+    return t
+
+
+def _body_for_document_text(text: str, filename: str | None) -> str:
+    """Return chunk content to include in document text (strip existing summary)."""
+    return _chunk_body_only(text, filename) or text
 
 
 def backfill_one_source(conn, group: str, source_id: int, source_path: str) -> int:
     """
-    For one source: build doc text from chunks, get summary, prepend to each
-    chunk and re-embed. Returns number of chunks updated.
+    For one source: build doc text from chunks, get summary, append bracketed
+    summary to each chunk and re-embed. Returns number of chunks updated.
     """
     init_db(conn)
     chunks = get_chunks_for_source(conn, source_id)
@@ -84,13 +125,14 @@ def backfill_one_source(conn, group: str, source_id: int, source_path: str) -> i
     if not summary:
         logger.warning("  [%s] source_id=%s summary failed, skipping", group, source_id)
         return 0
-    # Prepend summary to each chunk and re-embed
+    # Append "[SUMMARY of filename: (model sentence)]" to each chunk and re-embed
+    suffix = f"\n\n[SUMMARY of {filename}: {summary}]"
     texts_to_embed = []
     for c in chunks:
-        body = _strip_leading_doc_summary(c["text"], filename)
+        body = _chunk_body_only(c["text"], filename)
         if not body:
             body = c["text"]
-        new_text = f"{summary}\n\n{body}"
+        new_text = body + suffix
         texts_to_embed.append(new_text)
     try:
         embs = embed(texts_to_embed, group=group)
