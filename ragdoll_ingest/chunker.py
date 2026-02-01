@@ -87,7 +87,9 @@ def _get_semantic_chunk_texts_one(
     """Ask LLM for semantic chunks as text. Returns list of (chunk_text, start_offset) by locating each chunk in window_text."""
     prompt = (
         "Split the following text into coherent semantic chunks. "
-        "Each chunk should be a self-contained unit (e.g. a section, a few related paragraphs). "
+        "Each chunk must be a self-contained unit that includes the full content: if a section has a heading (e.g. 'Key phases:'), "
+        "include that heading AND all paragraphs and bullet lists under it in the same chunk. "
+        "Never output a chunk that is only a heading or title without the content that follows. "
         "Copy the exact text for each chunk; do not paraphrase or omit. "
         "Return ONLY valid JSON in this exact format, no other text:\n"
         '{"chunks": ["first chunk full text", "second chunk full text", ...]}\n\n'
@@ -150,10 +152,16 @@ def _get_semantic_chunk_texts_one(
         return []
 
 
+# Min window size when breaking at paragraph so we don't create tiny windows
+_SEMANTIC_WINDOW_MIN = 2000
+
+
 def _get_semantic_chunk_texts(
     full_text: str, ollama_url: str, group: str = "_root"
 ) -> list[tuple[str, int]]:
-    """Get semantic chunks as text (and start_offset for page mapping), using windowing if too long."""
+    """Get semantic chunks as text (and start_offset for page mapping), using windowing if too long.
+    Windows are cut at paragraph boundaries (\\n\\n) when possible to avoid splitting a section heading from its content.
+    """
     if not full_text.strip():
         return []
     if len(full_text) <= SEMANTIC_CHUNK_WINDOW:
@@ -161,13 +169,21 @@ def _get_semantic_chunk_texts(
     all_chunks: list[tuple[str, int]] = []
     offset = 0
     while offset < len(full_text):
-        window = full_text[offset : offset + SEMANTIC_CHUNK_WINDOW]
+        window_end = min(offset + SEMANTIC_CHUNK_WINDOW, len(full_text))
+        # Prefer to break at last paragraph boundary so we don't cut mid-section (e.g. heading from bullets)
+        break_at = window_end
+        if window_end < len(full_text):
+            search_region = full_text[offset:window_end]
+            last_pp = search_region.rfind("\n\n")
+            if last_pp >= _SEMANTIC_WINDOW_MIN:
+                break_at = offset + last_pp
+        window = full_text[offset:break_at]
         if not window.strip():
-            offset += SEMANTIC_CHUNK_WINDOW
+            offset = break_at
             continue
         part = _get_semantic_chunk_texts_one(window, ollama_url, group, window_offset=offset)
         all_chunks.extend(part)
-        offset += SEMANTIC_CHUNK_WINDOW
+        offset = break_at
     return all_chunks
 
 
