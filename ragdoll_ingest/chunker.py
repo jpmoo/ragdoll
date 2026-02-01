@@ -86,11 +86,15 @@ def _get_semantic_chunk_texts_one(
 ) -> list[tuple[str, int]]:
     """Ask LLM for semantic chunks as text. Returns list of (chunk_text, start_offset) by locating each chunk in window_text."""
     prompt = (
-        "Split the following text into coherent semantic chunks. Prefer longer, self-contained sections where possible. "
-        "Each chunk must be a self-contained unit that includes the full content: if a section has a heading (e.g. 'Key phases:'), "
-        "include that heading AND all paragraphs and bullet lists under it in the same chunk. "
-        "Never output a chunk that is only a heading or title without the content that follows. "
-        "Copy the exact text for each chunk; do not paraphrase or omit. "
+        "Split the following text into coherent semantic chunks. Prefer longer, self-contained sections. "
+        "Rules: "
+        "(1) One top-level section = one chunk. A top-level section is a numbered or main heading (e.g. '1. Infusing Values into Structure and Practice') "
+        "and EVERYTHING under it until the next top-level section: core focus, all subheadings (e.g. 'How leaders can capitalize...', 'Things to be wary of:'), "
+        "and all bullet lists and paragraphs under those subheadings. Do NOT split by subheading; keep the entire section in one chunk. "
+        "(2) Do NOT split bullet lists or output one chunk per bullet. Wrong: one chunk per bullet or one chunk per subheading. "
+        "Right: one chunk = entire numbered/main section including all subheadings and all bullets. "
+        "(3) Never output a chunk that is only a heading without the content that follows. "
+        "(4) Copy the exact text for each chunk; do not paraphrase or omit. "
         "Return ONLY valid JSON in this exact format, no other text:\n"
         '{"chunks": ["first chunk full text", "second chunk full text", ...]}\n\n'
         "Text:\n\n"
