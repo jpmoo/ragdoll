@@ -318,6 +318,19 @@ def api_create_chunk(group: str, source_id: int, body: ChunkCreate):
     primary_question_answered = (body.primary_question_answered or "").strip()
     key_signals = body.key_signals or []
     chunk_role = (body.chunk_role or "").strip()
+    # Fill in any semantic fields the user left empty via LLM
+    if not concept or not decision_context or not primary_question_answered or not key_signals or not chunk_role:
+        labels = extract_chunk_semantic_labels(body.text, group=safe_group)
+        if not concept and labels.get("concept"):
+            concept = (labels["concept"] or "").strip()
+        if not decision_context and labels.get("decision_context"):
+            decision_context = (labels["decision_context"] or "").strip()
+        if not primary_question_answered and labels.get("primary_question_answered"):
+            primary_question_answered = (labels["primary_question_answered"] or "").strip()
+        if not key_signals and labels.get("key_signals"):
+            key_signals = labels["key_signals"] or []
+        if not chunk_role and labels.get("chunk_role"):
+            chunk_role = (labels["chunk_role"] or "").strip()
     to_embed = _text_to_embed(body.text, concept, decision_context, primary_question_answered, key_signals, chunk_role)
     embs = embed([to_embed], group=safe_group)
     if not embs:
