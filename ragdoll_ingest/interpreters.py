@@ -37,6 +37,8 @@ def _ollama_text(prompt: str, model: str, group: str = "_root", timeout: int | N
 
 # Max chars of document to send for one-sentence summary (avoids huge prompts)
 DOC_SUMMARY_MAX_CHARS = 12_000
+# Max chars for the summary sentence (enforced as fallback; prompt asks model to stay under this)
+DOC_SUMMARY_RESPONSE_MAX_CHARS = 200
 
 
 def summarize_document(
@@ -45,9 +47,9 @@ def summarize_document(
     filename: str | None = None,
 ) -> str:
     """
-    Produce a one-sentence (25-35 words) summary of the document via LLM.
-    Returns the summary string only (no prefix). Caller prepends "SUMMARY: " when
-    storing. Returns empty string on failure.
+    Produce a one-sentence summary of the document via LLM.
+    Returns the summary string only (no prefix). Caller appends bracketed
+    "[SUMMARY of filename: ...]" when storing. Returns empty string on failure.
     """
     if not (document_text and document_text.strip()):
         return ""
@@ -57,7 +59,8 @@ def summarize_document(
     model = config.CHUNK_MODEL
     filename_context = f"Document filename: {filename.strip()}\n\n" if filename and filename.strip() else ""
     prompt = (
-        "Summarize the following document in exactly one sentence (25-35 words). "
+        "Summarize the following document in exactly one short sentence. "
+        "Keep it as short as possible. "
         "Be factual and descriptive. Reply with only that one sentence, no preamble or labels.\n\n"
         f"{filename_context}"
         "Document:\n\n"
@@ -66,18 +69,16 @@ def summarize_document(
     if not summary:
         return ""
     summary = summary.strip()
-    # Truncate to one sentence / word limit if model over-produced
+    # Use first sentence only if model produced multiple
     first_sentence = summary.split(". ")[0].strip()
     if first_sentence and not first_sentence.endswith("."):
         first_sentence += "."
-    words = first_sentence.split()
-    if not words:
-        summary = first_sentence or summary
-    elif len(words) > 40:
-        tail = words[:35]
-        summary = " ".join(tail) + ("." if tail and not tail[-1].endswith(".") else "")
-    else:
-        summary = first_sentence
+    summary = first_sentence or summary
+    # Enforce character cap as fallback
+    if len(summary) > DOC_SUMMARY_RESPONSE_MAX_CHARS:
+        summary = summary[: DOC_SUMMARY_RESPONSE_MAX_CHARS - 1].rsplit(" ", 1)[0]
+        if summary and not summary.endswith("."):
+            summary += "."
     action_log("summarize_document", model=model, group=group)
     return summary
 
