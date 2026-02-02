@@ -257,7 +257,7 @@ def _run_retrieval(
                         pq = row["primary_question_answered"] or None
                         if pq and isinstance(pq, str):
                             pq = pq.strip() or None
-                    chunk_role_val = row.get("chunk_role")
+                    chunk_role_val = row["chunk_role"] if "chunk_role" in row.keys() else None
                     if chunk_role_val and isinstance(chunk_role_val, str):
                         chunk_role_val = chunk_role_val.strip() or None
                     else:
