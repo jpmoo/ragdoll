@@ -268,6 +268,7 @@ Query parameters:
 - `history` (optional): Conversation history for context
 - `threshold` (optional, default: 0.45): Minimum similarity score (0.0-1.0)
 - `group` (optional): Specific collection/group to query; if absent, searches all collections
+- `limit_chunk_role` (optional, default: false): If true, infer up to 2 chunk roles from prompt+context via LLM and limit retrieval to those roles
 
 **`POST /query`** — Semantic similarity search (JSON body)
 ```bash
@@ -295,13 +296,15 @@ Request body:
 - `history` (optional): Conversation history for context
 - `threshold` (optional, default: 0.45): Minimum similarity score (0.0-1.0)
 - `group` (optional): Specific collection/group to query; if absent, searches all collections
+- `limit_chunk_role` (optional, default: false): If true, infer up to 2 chunk roles from prompt+context via LLM and limit retrieval to those roles
 
 Response includes:
 - `query`: Original prompt
 - `expanded_query`: LLM-expanded standalone description
 - `threshold`: Used threshold
 - `count`: Number of results
-- `results`: Array of matching chunks (sorted by similarity, highest first), each with: `group`, `source_path`, `source_name`, `source_type`, `chunk_index`, `text`, `artifact_type`, `artifact_path`, `page`, `similarity`
+- `results`: Array of matching chunks (sorted by similarity, highest first), each with: `group`, `source_path`, `source_name`, `source_type`, `chunk_index`, `text`, `artifact_type`, `artifact_path`, `page`, `chunk_role`, `similarity`
+- When role filtering was applied: `limit_chunk_role`: true, `inferred_roles`: list of inferred roles
 
 ## Review web app
 

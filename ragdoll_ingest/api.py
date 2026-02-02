@@ -3,6 +3,7 @@
 import json
 import logging
 import math
+import re
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,7 @@ from pydantic import BaseModel
 
 from . import config
 from .embedder import embed
+from .interpreters import CHUNK_ROLES
 from .storage import _connect, _list_sync_groups, clean_text, init_db
 from .config import get_group_paths, _sanitize_group
 
@@ -26,6 +28,7 @@ class QueryRequest(BaseModel):
     history: str | None = None
     threshold: float = 0.45
     group: list[str] | None = None  # Optional: collections to query; if None or empty, searches all
+    limit_chunk_role: bool = False  # If true, use LLM to infer up to 2 roles from prompt+history and limit retrieval to those
 
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
@@ -74,6 +77,55 @@ def _expand_query(prompt: str, history: str | None) -> str:
     except Exception as e:
         logger.warning("Query expansion failed: %s, using original prompt", e)
         return prompt
+
+
+def _infer_chunk_roles(prompt: str, history: str | None) -> list[str]:
+    """Use LLM to infer up to two chunk roles from the user's prompt and context.
+    Returns a list of 0, 1, or 2 roles from CHUNK_ROLES; empty if LLM fails or returns nothing useful.
+    """
+    roles_str = ", ".join(CHUNK_ROLES)
+    if history:
+        user_input = f"Conversation context:\n{history}\n\nUser: {prompt}"
+    else:
+        user_input = f"User question: {prompt}"
+    prompt_text = (
+        "Given the following user input, choose the one or two most relevant document chunk roles "
+        "that would best match what the user is looking for. "
+        f"Valid roles (use exactly these strings): {roles_str}. "
+        "Reply with ONLY valid JSON in this exact format, no other text: {\"roles\": [\"role1\", \"role2\"]}. "
+        "Use one or two roles; if none fit well, use an empty array: {\"roles\": []}.\n\n"
+        f"{user_input}"
+    )
+    model = config.QUERY_MODEL
+    url = (config.OLLAMA_HOST or "").rstrip("/")
+    try:
+        r = requests.post(
+            f"{url}/api/generate",
+            json={"model": model, "prompt": prompt_text, "stream": False},
+            timeout=config.CHUNK_LLM_TIMEOUT,
+        )
+        r.raise_for_status()
+        response = r.json().get("response", "").strip()
+        if not response:
+            return []
+        if "```" in response:
+            m = re.search(r"```(?:json)?\s*([\s\S]*?)```", response)
+            if m:
+                response = m.group(1).strip()
+        obj = json.loads(response)
+        raw = obj.get("roles")
+        if not isinstance(raw, list):
+            return []
+        out = []
+        for r in raw[:2]:
+            if isinstance(r, str):
+                r = r.strip().lower()
+                if r in CHUNK_ROLES and r not in out:
+                    out.append(r)
+        return out
+    except Exception as e:
+        logger.warning("Chunk role inference failed: %s", e)
+        return []
 
 
 @app.get("/rags")
@@ -146,7 +198,13 @@ def fetch_source(group: str, filename: str) -> FileResponse:
     )
 
 
-def _do_query(prompt: str, history: str | None, threshold: float, group: list[str] | None = None) -> dict[str, Any]:
+def _do_query(
+    prompt: str,
+    history: str | None,
+    threshold: float,
+    group: list[str] | None = None,
+    limit_chunk_role: bool = False,
+) -> dict[str, Any]:
     """Shared query logic for GET and POST endpoints.
     
     Args:
@@ -155,7 +213,17 @@ def _do_query(prompt: str, history: str | None, threshold: float, group: list[st
         threshold: Minimum similarity score (0.0-1.0)
         group: Optional list of collections to query; if None or empty, searches all collections.
                Results from all specified collections are merged and ranked by similarity only.
+        limit_chunk_role: If true, infer up to 2 chunk roles from prompt+history via LLM and limit retrieval to those.
     """
+    # Optionally infer chunk roles from user input (prompt + context)
+    role_filter: list[str] | None = None
+    if limit_chunk_role:
+        role_filter = _infer_chunk_roles(prompt, history)
+        if not role_filter:
+            role_filter = None
+        else:
+            logger.info("limit_chunk_role: inferred roles %s", role_filter)
+
     # Combine prompt and history, expand via LLM
     expanded = _expand_query(prompt, history)
     logger.info("Query expansion: %s -> %s", prompt[:100], expanded[:100])
@@ -186,15 +254,20 @@ def _do_query(prompt: str, history: str | None, threshold: float, group: list[st
         conn = _connect(group_name)
         try:
             init_db(conn)
+            base_cols = "source_path, source_type, chunk_index, text, embedding, artifact_type, artifact_path, page"
+            if role_filter:
+                placeholders = ",".join("?" * len(role_filter))
+                where = f" WHERE chunk_role IN ({placeholders})"
+            else:
+                where = ""
+            params: tuple = tuple(role_filter) if role_filter else ()
             try:
-                rows = conn.execute(
-                    "SELECT source_path, source_type, chunk_index, text, embedding, artifact_type, artifact_path, page, primary_question_answered FROM chunks"
-                ).fetchall()
+                sql = f"SELECT {base_cols}, primary_question_answered, chunk_role FROM chunks{where}"
+                rows = conn.execute(sql, params).fetchall()
             except Exception:
-                rows = conn.execute(
-                    "SELECT source_path, source_type, chunk_index, text, embedding, artifact_type, artifact_path, page FROM chunks"
-                ).fetchall()
-            
+                sql = f"SELECT {base_cols}, chunk_role FROM chunks{where}"
+                rows = conn.execute(sql, params).fetchall()
+
             for row in rows:
                 try:
                     chunk_emb = json.loads(row["embedding"])
@@ -228,6 +301,11 @@ def _do_query(prompt: str, history: str | None, threshold: float, group: list[st
                             pq = row["primary_question_answered"] or None
                             if pq and isinstance(pq, str):
                                 pq = pq.strip() or None
+                        chunk_role = row.get("chunk_role")
+                        if chunk_role and isinstance(chunk_role, str):
+                            chunk_role = chunk_role.strip() or None
+                        else:
+                            chunk_role = None
                         all_results.append({
                             "group": group_name,
                             "source_path": source_path,
@@ -237,6 +315,7 @@ def _do_query(prompt: str, history: str | None, threshold: float, group: list[st
                             "chunk_index": row["chunk_index"],
                             "text": clean_text(row["text"]),
                             "primary_question_answered": pq,
+                            "chunk_role": chunk_role,
                             "artifact_type": row["artifact_type"] or "text",
                             "artifact_path": row["artifact_path"],
                             "page": row["page"],
@@ -249,13 +328,17 @@ def _do_query(prompt: str, history: str | None, threshold: float, group: list[st
             conn.close()
     
     all_results.sort(key=lambda x: x["similarity"], reverse=True)
-    return {
+    out: dict[str, Any] = {
         "query": prompt,
         "expanded_query": expanded,
         "threshold": threshold,
         "results": all_results,
         "count": len(all_results),
     }
+    if role_filter is not None:
+        out["limit_chunk_role"] = True
+        out["inferred_roles"] = role_filter
+    return out
 
 
 @app.get("/query")
@@ -264,6 +347,7 @@ def query_rag_get(
     history: str | None = None,
     threshold: float = 0.45,
     group: list[str] | None = Query(default=None, description="Collections to query; repeat for multiple, or omit for all"),
+    limit_chunk_role: bool = Query(False, description="If true, infer up to 2 chunk roles from prompt+context and limit retrieval to those"),
 ) -> dict[str, Any]:
     """Query RAG collections via GET (simple URL format).
     
@@ -273,8 +357,9 @@ def query_rag_get(
     - threshold: Minimum similarity score (default: 0.45)
     - group: Optional list of collections (e.g. ?group=a&group=b); if absent, searches all.
              Results are merged and ranked by similarity; each result includes a "group" field.
+    - limit_chunk_role: If true, use LLM to infer chunk roles from prompt+context and limit retrieval; false if absent.
     """
-    return _do_query(prompt, history, threshold, group)
+    return _do_query(prompt, history, threshold, group, limit_chunk_role)
 
 
 @app.post("/query")
@@ -288,8 +373,9 @@ def query_rag(request: QueryRequest) -> dict[str, Any]:
     - group: Optional list of collection names to query; if null or empty, searches all.
              Results from all specified collections are merged into one list and ranked by similarity;
              each result includes a "group" field indicating its collection.
+    - limit_chunk_role: If true, use LLM to infer up to 2 chunk roles from prompt+context and limit retrieval; false if absent.
     """
-    return _do_query(request.prompt, request.history, request.threshold, request.group)
+    return _do_query(request.prompt, request.history, request.threshold, request.group, request.limit_chunk_role)
 
 
 if __name__ == "__main__":

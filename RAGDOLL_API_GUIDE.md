@@ -138,6 +138,7 @@ curl "http://localhost:9042/query?prompt=What%20is%20double-loop%20learning&grou
 - `history` (optional): Previous conversation context for better query expansion
 - `threshold` (optional, default: 0.45): Minimum similarity score (0.0-1.0). Lower = more results, higher = more precise
 - `group` (optional): Specific collection name. If absent, searches all collections
+- `limit_chunk_role` (optional, default: false): If true, the server runs your prompt and context through an LLM to infer up to two chunk roles (from the same roles used at ingest), then limits retrieval to chunks matching those roles. If false or absent, retrieval is not limited by role.
 
 **Python example:**
 ```python
@@ -185,12 +186,27 @@ payload = {
     "prompt": "What is double-loop learning?",
     "history": "Previous conversation context...",  # Optional
     "threshold": 0.45,  # Optional, default 0.45
-    "group": "edleadership"  # Optional, searches all if absent
+    "group": "edleadership",  # Optional, searches all if absent
+    "limit_chunk_role": False  # Optional; if True, infer roles from prompt+context and limit retrieval
 }
 
 response = requests.post("http://localhost:9042/query", json=payload)
 results = response.json()
 ```
+
+**Limit retrieval by inferred chunk role (POST):**
+```bash
+curl -X POST http://localhost:9042/query \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "How do I diagnose low morale?",
+    "history": "User: We have turnover issues.\nAssistant: ...",
+    "limit_chunk_role": true,
+    "threshold": 0.45
+  }'
+```
+
+When `limit_chunk_role` is true, the server sends your prompt and any `history` to the same LLM used for query expansion, which picks up to two chunk roles (e.g. `definition`, `diagnostic guidance`, `action/strategy`) from the ingest role list. Retrieval is then limited to chunks with those roles. If the LLM returns no valid roles, retrieval is not limited. The response may include `limit_chunk_role: true` and `inferred_roles: ["role1", "role2"]` when role filtering was applied.
 
 ---
 
@@ -215,6 +231,7 @@ results = response.json()
       "artifact_type": "text",
       "artifact_path": null,
       "page": 3,
+      "chunk_role": "framework explanation",
       "similarity": 0.8234
     },
     {
@@ -258,7 +275,12 @@ Each result in the `results` array contains:
   - `"figure_summary"`: LLM summary of a figure/diagram
 - **`artifact_path`**: Path to stored artifact (image/JSON) if applicable, `null` for text
 - **`page`**: Page number (for PDFs), `null` for non-paginated documents
+- **`chunk_role`**: Role assigned during ingest (e.g. `definition`, `action/strategy`), or `null` if none
 - **`similarity`**: Cosine similarity score (0.0-1.0), higher = more relevant
+
+When `limit_chunk_role` was true and role filtering was applied, the response also includes:
+- **`limit_chunk_role`**: `true`
+- **`inferred_roles`**: Array of the one or two roles inferred from the user input (e.g. `["diagnostic guidance", "action/strategy"]`)
 
 ---
 
