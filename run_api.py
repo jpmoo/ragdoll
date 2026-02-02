@@ -7,8 +7,9 @@ import uvicorn
 
 from ragdoll_ingest import config
 
+_level = getattr(logging, config.LOG_LEVEL, logging.INFO)
 logging.basicConfig(
-    level=logging.INFO,
+    level=_level,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     stream=sys.stdout,
 )

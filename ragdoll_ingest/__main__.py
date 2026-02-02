@@ -3,10 +3,12 @@
 import logging
 import sys
 
+from . import config
 from .watcher import run_watcher
 
+_level = getattr(logging, config.LOG_LEVEL, logging.INFO)
 logging.basicConfig(
-    level=logging.INFO,
+    level=_level,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     stream=sys.stdout,
 )

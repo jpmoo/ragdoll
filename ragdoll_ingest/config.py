@@ -105,6 +105,9 @@ QUERY_MODEL = get_env("RAGDOLL_QUERY_MODEL") or "llama3.2:3b"
 # API server
 API_PORT = int(get_env("RAGDOLL_API_PORT") or "9042")
 
+# Logging: DEBUG, INFO, WARNING, ERROR. Default INFO. Set RAGDOLL_LOG_LEVEL=DEBUG for verbose server logs.
+LOG_LEVEL = (get_env("RAGDOLL_LOG_LEVEL") or "INFO").upper()
+
 # Garbage control
 GARBAGE_MIN_CHARS = int(get_env("RAGDOLL_GARBAGE_MIN_CHARS") or "20")
 GARBAGE_MIN_TOKENS = int(get_env("RAGDOLL_GARBAGE_MIN_TOKENS") or "10")

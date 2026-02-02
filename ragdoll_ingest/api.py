@@ -198,6 +198,93 @@ def fetch_source(group: str, filename: str) -> FileResponse:
     )
 
 
+def _run_retrieval(
+    groups: list[str],
+    query_emb: list[float],
+    threshold: float,
+    role_filter: list[str] | None,
+) -> list[dict[str, Any]]:
+    """Run similarity retrieval over groups with optional chunk_role filter. Returns sorted results."""
+    results: list[dict[str, Any]] = []
+    base_cols = "source_path, source_type, chunk_index, text, embedding, artifact_type, artifact_path, page"
+    for group_name in groups:
+        conn = _connect(group_name)
+        try:
+            init_db(conn)
+            if role_filter:
+                placeholders = ",".join("?" * len(role_filter))
+                where = f" WHERE chunk_role IN ({placeholders})"
+            else:
+                where = ""
+            params: tuple = tuple(role_filter) if role_filter else ()
+            try:
+                sql = f"SELECT {base_cols}, primary_question_answered, chunk_role FROM chunks{where}"
+                rows = conn.execute(sql, params).fetchall()
+            except Exception:
+                sql = f"SELECT {base_cols}, chunk_role FROM chunks{where}"
+                rows = conn.execute(sql, params).fetchall()
+
+            for row in rows:
+                try:
+                    chunk_emb = json.loads(row["embedding"])
+                    similarity = _cosine_similarity(query_emb, chunk_emb)
+                    if similarity < threshold:
+                        continue
+                    source_path = row["source_path"]
+                    source_name = Path(source_path).name
+                    gp = get_group_paths(group_name)
+                    try:
+                        full_source_path = Path(source_path)
+                        if full_source_path.is_absolute():
+                            try:
+                                rel_path = full_source_path.relative_to(gp.sources_dir)
+                            except ValueError:
+                                rel_path = Path(source_name)
+                        else:
+                            rel_path = Path(source_path)
+                        parts = rel_path.parts
+                        if len(parts) > 0 and parts[0] == "sources":
+                            rel_path = Path(*parts[1:])
+                        path_str = str(rel_path).replace("\\", "/")
+                        from urllib.parse import quote
+                        encoded_path = "/".join(quote(part, safe="") for part in path_str.split("/"))
+                        fetch_url = f"/fetch/{group_name}/{encoded_path}"
+                    except Exception as e:
+                        logger.warning("Could not build fetch URL for %s: %s", source_path, e)
+                        fetch_url = None
+                    pq = None
+                    if "primary_question_answered" in row.keys():
+                        pq = row["primary_question_answered"] or None
+                        if pq and isinstance(pq, str):
+                            pq = pq.strip() or None
+                    chunk_role_val = row.get("chunk_role")
+                    if chunk_role_val and isinstance(chunk_role_val, str):
+                        chunk_role_val = chunk_role_val.strip() or None
+                    else:
+                        chunk_role_val = None
+                    results.append({
+                        "group": group_name,
+                        "source_path": source_path,
+                        "source_type": row["source_type"],
+                        "source_name": source_name,
+                        "source_url": fetch_url,
+                        "chunk_index": row["chunk_index"],
+                        "text": clean_text(row["text"]),
+                        "primary_question_answered": pq,
+                        "chunk_role": chunk_role_val,
+                        "artifact_type": row["artifact_type"] or "text",
+                        "artifact_path": row["artifact_path"],
+                        "page": row["page"],
+                        "similarity": round(similarity, 4),
+                    })
+                except (json.JSONDecodeError, ValueError) as e:
+                    logger.warning("Invalid embedding for chunk %s/%s/%d: %s", group_name, row["source_path"], row["chunk_index"], e)
+        finally:
+            conn.close()
+    results.sort(key=lambda x: x["similarity"], reverse=True)
+    return results
+
+
 def _do_query(
     prompt: str,
     history: str | None,
@@ -215,7 +302,7 @@ def _do_query(
                Results from all specified collections are merged and ranked by similarity only.
         limit_chunk_role: If true, infer up to 2 chunk roles from prompt+history via LLM and limit retrieval to those.
     """
-    # Optionally infer chunk roles from user input (prompt + context)
+    # Optionally infer chunk roles from user input (prompt + context); uses current CHUNK_ROLES (description, application, implication)
     role_filter: list[str] | None = None
     if limit_chunk_role:
         role_filter = _infer_chunk_roles(prompt, history)
@@ -236,10 +323,8 @@ def _do_query(
         raise HTTPException(status_code=500, detail=f"Embedding failed: {e}")
     
     # Determine which groups to search
-    all_results: list[dict[str, Any]] = []
     all_groups = _list_sync_groups()
     if group and len(group) > 0:
-        # Query only the specified collections; validate each exists
         missing = [g for g in group if g not in all_groups]
         if missing:
             raise HTTPException(
@@ -249,97 +334,19 @@ def _do_query(
         groups = list(group)
     else:
         groups = all_groups
-    
-    for group_name in groups:
-        conn = _connect(group_name)
-        try:
-            init_db(conn)
-            base_cols = "source_path, source_type, chunk_index, text, embedding, artifact_type, artifact_path, page"
-            if role_filter:
-                placeholders = ",".join("?" * len(role_filter))
-                where = f" WHERE chunk_role IN ({placeholders})"
-            else:
-                where = ""
-            params: tuple = tuple(role_filter) if role_filter else ()
-            try:
-                sql = f"SELECT {base_cols}, primary_question_answered, chunk_role FROM chunks{where}"
-                rows = conn.execute(sql, params).fetchall()
-            except Exception:
-                sql = f"SELECT {base_cols}, chunk_role FROM chunks{where}"
-                rows = conn.execute(sql, params).fetchall()
 
-            for row in rows:
-                try:
-                    chunk_emb = json.loads(row["embedding"])
-                    similarity = _cosine_similarity(query_emb, chunk_emb)
-                    
-                    if similarity >= threshold:
-                        source_path = row["source_path"]
-                        source_name = Path(source_path).name
-                        gp = get_group_paths(group_name)
-                        try:
-                            full_source_path = Path(source_path)
-                            if full_source_path.is_absolute():
-                                try:
-                                    rel_path = full_source_path.relative_to(gp.sources_dir)
-                                except ValueError:
-                                    rel_path = Path(source_name)
-                            else:
-                                rel_path = Path(source_path)
-                                parts = rel_path.parts
-                                if len(parts) > 0 and parts[0] == "sources":
-                                    rel_path = Path(*parts[1:])
-                            path_str = str(rel_path).replace("\\", "/")
-                            from urllib.parse import quote
-                            encoded_path = "/".join(quote(part, safe="") for part in path_str.split("/"))
-                            fetch_url = f"/fetch/{group_name}/{encoded_path}"
-                        except Exception as e:
-                            logger.warning("Could not build fetch URL for %s: %s", source_path, e)
-                            fetch_url = None
-                        pq = None
-                        if "primary_question_answered" in row.keys():
-                            pq = row["primary_question_answered"] or None
-                            if pq and isinstance(pq, str):
-                                pq = pq.strip() or None
-                        chunk_role = row.get("chunk_role")
-                        if chunk_role and isinstance(chunk_role, str):
-                            chunk_role = chunk_role.strip() or None
-                        else:
-                            chunk_role = None
-                        all_results.append({
-                            "group": group_name,
-                            "source_path": source_path,
-                            "source_type": row["source_type"],
-                            "source_name": source_name,
-                            "source_url": fetch_url,
-                            "chunk_index": row["chunk_index"],
-                            "text": clean_text(row["text"]),
-                            "primary_question_answered": pq,
-                            "chunk_role": chunk_role,
-                            "artifact_type": row["artifact_type"] or "text",
-                            "artifact_path": row["artifact_path"],
-                            "page": row["page"],
-                            "similarity": round(similarity, 4),
-                        })
-                except (json.JSONDecodeError, ValueError) as e:
-                    logger.warning("Invalid embedding for chunk %s/%s/%d: %s", group_name, row["source_path"], row["chunk_index"], e)
-                    continue
-        finally:
-            conn.close()
-    
-    all_results.sort(key=lambda x: x["similarity"], reverse=True)
+    # Run retrieval (with optional role filter)
+    all_results = _run_retrieval(groups, query_emb, threshold, role_filter)
 
-    # If we filtered by role but got zero results, fall back to unfiltered retrieval
-    # (e.g. most chunks have NULL/empty chunk_role and don't match inferred roles)
+    # If we filtered by role but got zero results, re-run retrieval without role filter (same embedding)
+    role_filter_relaxed = False
     if role_filter is not None and len(all_results) == 0:
         logger.warning(
             "limit_chunk_role: no chunks matched inferred roles %s; retrying without role filter",
             role_filter,
         )
-        fallback = _do_query(prompt, history, threshold, group, limit_chunk_role=False)
-        fallback["role_filter_relaxed"] = True
-        fallback["inferred_roles"] = role_filter
-        return fallback
+        all_results = _run_retrieval(groups, query_emb, threshold, None)
+        role_filter_relaxed = True
 
     out: dict[str, Any] = {
         "query": prompt,
@@ -348,7 +355,10 @@ def _do_query(
         "results": all_results,
         "count": len(all_results),
     }
-    if role_filter is not None:
+    if role_filter_relaxed:
+        out["role_filter_relaxed"] = True
+        out["inferred_roles"] = role_filter
+    elif role_filter is not None:
         out["limit_chunk_role"] = True
         out["inferred_roles"] = role_filter
     return out
