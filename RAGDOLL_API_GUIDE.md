@@ -206,7 +206,7 @@ curl -X POST http://localhost:9042/query \
   }'
 ```
 
-When `limit_chunk_role` is true, the server sends your prompt and any `history` to the same LLM used for query expansion, which picks up to two chunk roles (e.g. `definition`, `diagnostic guidance`, `action/strategy`) from the ingest role list. Retrieval is then limited to chunks with those roles. If the LLM returns no valid roles, retrieval is not limited. The response may include `limit_chunk_role: true` and `inferred_roles: ["role1", "role2"]` when role filtering was applied.
+When `limit_chunk_role` is true, the server sends your prompt and any `history` to the same LLM used for query expansion, which picks up to two chunk roles (e.g. `description`, `application`, `implication`) from the ingest role list. Retrieval is then limited to chunks with those roles. If the LLM returns no valid roles, retrieval is not limited. The response may include `limit_chunk_role: true` and `inferred_roles: ["role1", "role2"]` when role filtering was applied.
 
 ---
 
@@ -231,7 +231,7 @@ When `limit_chunk_role` is true, the server sends your prompt and any `history` 
       "artifact_type": "text",
       "artifact_path": null,
       "page": 3,
-      "chunk_role": "framework explanation",
+      "chunk_role": "description",
       "similarity": 0.8234
     },
     {
@@ -275,12 +275,14 @@ Each result in the `results` array contains:
   - `"figure_summary"`: LLM summary of a figure/diagram
 - **`artifact_path`**: Path to stored artifact (image/JSON) if applicable, `null` for text
 - **`page`**: Page number (for PDFs), `null` for non-paginated documents
-- **`chunk_role`**: Role assigned during ingest (e.g. `definition`, `action/strategy`), or `null` if none
+- **`chunk_role`**: Role assigned during ingest (e.g. `description`, `application`, `implication`), or `null` if none
 - **`similarity`**: Cosine similarity score (0.0-1.0), higher = more relevant
 
 When `limit_chunk_role` was true and role filtering was applied, the response also includes:
 - **`limit_chunk_role`**: `true`
-- **`inferred_roles`**: Array of the one or two roles inferred from the user input (e.g. `["diagnostic guidance", "action/strategy"]`)
+- **`inferred_roles`**: Array of the one or two roles inferred from the user input (e.g. `["description", "application"]`)
+
+If no chunks matched the inferred roles (e.g. most chunks have no role set), the server falls back to unfiltered retrieval and adds **`role_filter_relaxed`**: `true` and **`inferred_roles`** so you still get results and know the filter was relaxed.
 
 ---
 

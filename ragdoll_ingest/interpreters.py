@@ -10,12 +10,9 @@ from .action_log import log as action_log
 logger = logging.getLogger(__name__)
 
 CHUNK_ROLES = (
-    "definition",
-    "framework explanation",
-    "diagnostic guidance",
-    "action/strategy",
-    "example/application",
-    "implications/consequences",
+    "description",
+    "application",
+    "implication",
 )
 
 AUTH = (

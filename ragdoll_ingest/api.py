@@ -328,6 +328,19 @@ def _do_query(
             conn.close()
     
     all_results.sort(key=lambda x: x["similarity"], reverse=True)
+
+    # If we filtered by role but got zero results, fall back to unfiltered retrieval
+    # (e.g. most chunks have NULL/empty chunk_role and don't match inferred roles)
+    if role_filter is not None and len(all_results) == 0:
+        logger.warning(
+            "limit_chunk_role: no chunks matched inferred roles %s; retrying without role filter",
+            role_filter,
+        )
+        fallback = _do_query(prompt, history, threshold, group, limit_chunk_role=False)
+        fallback["role_filter_relaxed"] = True
+        fallback["inferred_roles"] = role_filter
+        return fallback
+
     out: dict[str, Any] = {
         "query": prompt,
         "expanded_query": expanded,
