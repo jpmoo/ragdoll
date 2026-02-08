@@ -285,6 +285,67 @@ def _run_retrieval(
     return results
 
 
+# Max chunk chars to send to relevance model (avoid huge prompts)
+_RELEVANCE_CHUNK_MAX_CHARS = 4000
+
+
+def _is_chunk_relevant(prompt: str, history: str | None, chunk_text: str) -> bool:
+    """Ask the LLM whether this chunk is truly relevant to the user's conversation. Returns True if relevant, False if not. On failure, returns True (keep chunk)."""
+    if not (chunk_text and chunk_text.strip()):
+        return True
+    text = chunk_text.strip()
+    if len(text) > _RELEVANCE_CHUNK_MAX_CHARS:
+        text = text[:_RELEVANCE_CHUNK_MAX_CHARS] + "\n\n[... truncated ...]"
+    if history:
+        context = f"Conversation context:\n{history}\n\nUser: {prompt}"
+    else:
+        context = f"User question: {prompt}"
+    prompt_text = (
+        "Given the user's current question and conversation context below, is the following document chunk "
+        "truly relevant to answering or discussing their need? Reply with exactly YES or NO.\n\n"
+        f"{context}\n\n"
+        "Document chunk:\n\n"
+        f"{text}\n\n"
+        "Relevant? YES or NO:"
+    )
+    model = config.QUERY_MODEL
+    url = (config.OLLAMA_HOST or "").rstrip("/")
+    try:
+        r = requests.post(
+            f"{url}/api/generate",
+            json={"model": model, "prompt": prompt_text, "stream": False},
+            timeout=config.CHUNK_LLM_TIMEOUT,
+        )
+        r.raise_for_status()
+        response = (r.json().get("response") or "").strip().upper()
+        if not response:
+            return True
+        # Treat YES as relevant; anything else (NO or ambiguous) as not relevant
+        return response.startswith("YES")
+    except Exception as e:
+        logger.warning("Relevance check failed for chunk, keeping it: %s", e)
+        return True
+
+
+def _filter_relevant_results(
+    prompt: str,
+    history: str | None,
+    results: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Send each result to the LLM; exclude chunks that are not relevant to the user's conversation."""
+    if not results:
+        return results
+    kept: list[dict[str, Any]] = []
+    for i, r in enumerate(results):
+        text = r.get("text") or ""
+        if _is_chunk_relevant(prompt, history, text):
+            kept.append(r)
+        else:
+            logger.debug("Excluded chunk %s/%s (not relevant)", r.get("group"), r.get("chunk_index"))
+    logger.info("Relevance filter: kept %d of %d chunks", len(kept), len(results))
+    return kept
+
+
 def _do_query(
     prompt: str,
     history: str | None,
@@ -347,6 +408,9 @@ def _do_query(
         )
         all_results = _run_retrieval(groups, query_emb, threshold, None)
         role_filter_relaxed = True
+
+    # Before returning, filter out chunks the LLM says are not relevant to the user's conversation
+    all_results = _filter_relevant_results(prompt, history, all_results)
 
     out: dict[str, Any] = {
         "query": prompt,
