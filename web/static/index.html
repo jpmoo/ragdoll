@@ -78,6 +78,51 @@
       font-weight: 600;
       color: var(--muted);
     }
+    .source-summary-block {
+      padding: 0.75rem 1rem;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+    .source-summary-label {
+      display: block;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--muted);
+      margin-bottom: 0.25rem;
+    }
+    .source-summary-text {
+      margin: 0 0 0.5rem 0;
+      font-size: 0.9rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .source-summary-edit textarea {
+      width: 100%;
+      margin-bottom: 0.5rem;
+      padding: 0.5rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 6px;
+      font: inherit;
+    }
+    .source-summary-edit-btn, .source-summary-edit button {
+      padding: 0.25rem 0.5rem;
+      font-size: 0.85rem;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+      cursor: pointer;
+    }
+    .source-summary-edit button { margin-right: 0.5rem; }
+    .source-summary-edit-btn:hover, .source-summary-edit button:hover { background: var(--border); }
+    .exclude-rewrite {
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin-top: 0.15rem;
+    }
+    .exclude-rewrite input { margin-right: 0.35rem; }
     .source-view {
       flex: 1;
       min-height: 200px;
@@ -333,6 +378,19 @@
 
     <section class="panel">
       <div class="panel-title">Samples (chunks)</div>
+      <div id="sourceSummaryBlock" class="source-summary-block" style="display: none;">
+        <div class="source-summary-view">
+          <span class="source-summary-label">Document summary</span>
+          <p class="source-summary-text" id="sourceSummaryText"></p>
+          <button type="button" id="sourceSummaryEditBtn" class="source-summary-edit-btn">Edit</button>
+        </div>
+        <div class="source-summary-edit" style="display: none;">
+          <label class="source-summary-label">Document summary</label>
+          <textarea id="sourceSummaryTextarea" rows="3"></textarea>
+          <button type="button" id="sourceSummarySaveBtn">Save</button>
+          <button type="button" id="sourceSummaryCancelBtn">Cancel</button>
+        </div>
+      </div>
       <div class="samples-toolbar">
         <label><input type="radio" name="filter" value="all" checked> All samples</label>
         <label><input type="radio" name="filter" value="page"> Page <input type="number" id="pageNum" min="1" value="1" aria-label="Page number"></label>
@@ -399,7 +457,7 @@
   </script>
   <script>
     const API = '/api';
-    let state = { group: '', sourceId: null, source: null, chunks: [], pdfDoc: null, currentPdfPage: 1, pdfNumPages: 1 };
+    let state = { group: '', sourceId: null, source: null, chunks: [], sourceSummary: null, pdfDoc: null, currentPdfPage: 1, pdfNumPages: 1 };
 
     function qs(sel, el = document) { return el.querySelector(sel); }
     function qsAll(sel, el = document) { return el.querySelectorAll(sel); }
@@ -557,13 +615,33 @@
       const pageNum = filter === 'page' ? parseInt(qs('#pageNum').value, 10) : null;
       const path = `/groups/${encodeURIComponent(state.group)}/sources/${state.sourceId}/chunks` + (pageNum != null && pageNum >= 1 ? `?page=${pageNum}` : '');
       try {
-        const { chunks } = await fetchJson(path);
-        state.chunks = chunks || [];
+        const data = await fetchJson(path);
+        state.chunks = data.chunks || [];
+        state.sourceSummary = data.source_summary != null ? data.source_summary : null;
       } catch (e) {
         state.chunks = [];
+        state.sourceSummary = null;
         toast('Failed to load samples: ' + e.message);
       }
       renderChunks();
+      renderSourceSummary();
+    }
+
+    function renderSourceSummary() {
+      const block = qs('#sourceSummaryBlock');
+      const viewDiv = block.querySelector('.source-summary-view');
+      const editDiv = block.querySelector('.source-summary-edit');
+      const textEl = qs('#sourceSummaryText');
+      const textarea = qs('#sourceSummaryTextarea');
+      if (!state.group || state.sourceId == null) {
+        block.style.display = 'none';
+        return;
+      }
+      block.style.display = 'block';
+      viewDiv.style.display = 'block';
+      editDiv.style.display = 'none';
+      textEl.textContent = state.sourceSummary || '(No summary)';
+      textarea.value = state.sourceSummary || '';
     }
 
     function renderChunks() {
@@ -605,11 +683,11 @@
           <div class="meta">#${c.chunk_index} · ${pageInfo} · ${c.artifact_type || 'text'}</div>
           <div class="semantic-block semantic-view">${semanticRows}</div>
           <div class="semantic-block semantic-edit" style="display: none;">
-            <div class="semantic-row"><span class="semantic-label">Concept</span><input type="text" data-field="concept" value="${escapeHtml(concept)}" /></div>
-            <div class="semantic-row"><span class="semantic-label">Decision context</span><input type="text" data-field="decision_context" value="${escapeHtml(decisionContext)}" /></div>
-            <div class="semantic-row"><span class="semantic-label">Primary question answered</span><input type="text" data-field="primary_question_answered" value="${escapeHtml(primaryQuestion)}" /></div>
-            <div class="semantic-row"><span class="semantic-label">Key signals (one per line)</span><textarea data-field="key_signals" rows="2">${escapeHtml(keySignals)}</textarea></div>
-            <div class="semantic-row"><span class="semantic-label">Chunk role</span><select data-field="chunk_role"><option value="">—</option>${roleOptions}</select></div>
+            <div class="semantic-row"><span class="semantic-label">Concept</span><input type="text" data-field="concept" value="${escapeHtml(concept)}" /><div class="exclude-rewrite"><label><input type="checkbox" data-exclude-field="concept" /> Exclude from AI rewrite</label></div></div>
+            <div class="semantic-row"><span class="semantic-label">Decision context</span><input type="text" data-field="decision_context" value="${escapeHtml(decisionContext)}" /><div class="exclude-rewrite"><label><input type="checkbox" data-exclude-field="decision_context" /> Exclude from AI rewrite</label></div></div>
+            <div class="semantic-row"><span class="semantic-label">Primary question answered</span><input type="text" data-field="primary_question_answered" value="${escapeHtml(primaryQuestion)}" /><div class="exclude-rewrite"><label><input type="checkbox" data-exclude-field="primary_question_answered" /> Exclude from AI rewrite</label></div></div>
+            <div class="semantic-row"><span class="semantic-label">Key signals (one per line)</span><textarea data-field="key_signals" rows="2">${escapeHtml(keySignals)}</textarea><div class="exclude-rewrite"><label><input type="checkbox" data-exclude-field="key_signals" /> Exclude from AI rewrite</label></div></div>
+            <div class="semantic-row"><span class="semantic-label">Chunk role</span><select data-field="chunk_role"><option value="">—</option>${roleOptions}</select><div class="exclude-rewrite"><label><input type="checkbox" data-exclude-field="chunk_role" /> Exclude from AI rewrite</label></div></div>
           </div>
           <div class="text" data-id="${c.id}">${escapeHtml(c.text)}</div>
           <textarea data-id="${c.id}" class="edit-text" style="display: none;"></textarea>
@@ -645,7 +723,8 @@
         const key_signalsRaw = (editBlock.querySelector('[data-field="key_signals"]')?.value || '').trim();
         const key_signals = key_signalsRaw ? key_signalsRaw.split(/\n/).map(s => s.trim()).filter(Boolean) : [];
         const chunk_role = (editBlock.querySelector('[data-field="chunk_role"]')?.value || '').trim();
-        return { concept, decision_context, primary_question_answered, key_signals, chunk_role };
+        const exclude_from_ai_rewrite = Array.from(editBlock.querySelectorAll('[data-exclude-field]:checked')).map(cb => cb.dataset.excludeField).filter(Boolean);
+        return { concept, decision_context, primary_question_answered, key_signals, chunk_role, exclude_from_ai_rewrite: exclude_from_ai_rewrite.length ? exclude_from_ai_rewrite : undefined };
       }
 
       if (action === 'edit') {
@@ -658,10 +737,12 @@
           const newText = ta.value.trim();
           const semantic = getSemanticFromCard(card);
           try {
+            const payload = { text: newText, ...semantic };
+            if (semantic.exclude_from_ai_rewrite) payload.exclude_from_ai_rewrite = semantic.exclude_from_ai_rewrite;
             const r = await fetch(API + `/groups/${group}/chunks/${chunkId}`, {
               method: 'PATCH',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ text: newText, ...semantic }),
+              body: JSON.stringify(payload),
             });
             if (!r.ok) throw new Error();
             textEl.textContent = newText;
@@ -698,11 +779,13 @@
         const semanticEdit = card.querySelector('.semantic-edit');
         const newText = ta.value.trim();
         const semantic = getSemanticFromCard(card);
+        const payload = { text: newText, ...semantic };
+        if (semantic.exclude_from_ai_rewrite) payload.exclude_from_ai_rewrite = semantic.exclude_from_ai_rewrite;
         try {
           const r = await fetch(API + `/groups/${group}/chunks/${chunkId}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: newText, ...semantic }),
+            body: JSON.stringify(payload),
           });
           if (!r.ok) throw new Error();
           textEl.textContent = newText;
@@ -757,6 +840,36 @@
         }
       }
     }
+
+    qs('#sourceSummaryEditBtn').addEventListener('click', function() {
+      qs('#sourceSummaryBlock').querySelector('.source-summary-view').style.display = 'none';
+      qs('#sourceSummaryBlock').querySelector('.source-summary-edit').style.display = 'block';
+      qs('#sourceSummaryTextarea').value = state.sourceSummary || '';
+      qs('#sourceSummaryTextarea').focus();
+    });
+    qs('#sourceSummaryCancelBtn').addEventListener('click', function() {
+      qs('#sourceSummaryBlock').querySelector('.source-summary-view').style.display = 'block';
+      qs('#sourceSummaryBlock').querySelector('.source-summary-edit').style.display = 'none';
+    });
+    qs('#sourceSummarySaveBtn').addEventListener('click', async function() {
+      if (!state.group || state.sourceId == null) return;
+      const summary = qs('#sourceSummaryTextarea').value.trim() || null;
+      try {
+        const r = await fetch(API + '/groups/' + encodeURIComponent(state.group) + '/sources/' + state.sourceId, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ summary: summary || null }),
+        });
+        if (!r.ok) throw new Error();
+        state.sourceSummary = summary;
+        qs('#sourceSummaryText').textContent = summary || '(No summary)';
+        qs('#sourceSummaryBlock').querySelector('.source-summary-view').style.display = 'block';
+        qs('#sourceSummaryBlock').querySelector('.source-summary-edit').style.display = 'none';
+        toast('Summary saved.');
+      } catch (e) {
+        toast('Failed to save summary.');
+      }
+    });
 
     qs('#groupSelect').addEventListener('change', onGroupChange);
     qs('#sourceSelect').addEventListener('change', onSourceChange);

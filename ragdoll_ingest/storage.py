@@ -313,7 +313,12 @@ def init_db(conn: sqlite3.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS ix_sources_path ON sources(source_path);
     """)
-    
+    try:
+        conn.execute("ALTER TABLE sources ADD COLUMN summary TEXT")
+    except sqlite3.OperationalError as e:
+        if "duplicate" not in str(e).lower():
+            raise
+
     # Check if chunks table exists
     table_exists = conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='chunks'"
@@ -474,14 +479,18 @@ def add_chunks(
     source_path: str,
     source_type: str,
     chunks: list[dict],
+    doc_summary: str | None = None,
 ) -> None:
     """
     chunks: list of {text, embedding, artifact_type?, artifact_path?, page?,
     concept?, decision_context?, primary_question_answered?, key_signals?, chunk_role?}.
     key_signals: list of str (stored as JSON array string).
+    doc_summary: optional 1-3 sentence document summary; stored on the source, not in chunk text.
     """
     init_db(conn)
     source_id = _get_or_create_source(conn, source_path, source_type)
+    if doc_summary and (doc_summary := (doc_summary or "").strip()):
+        set_source_summary(conn, source_id, doc_summary)
     for i, c in enumerate(chunks):
         text = clean_text(c.get("text", ""))
         emb = c.get("embedding", [])
@@ -540,24 +549,50 @@ def get_source_by_id(conn: sqlite3.Connection, source_id: int) -> tuple[str, str
     return None
 
 
-def list_sources(conn: sqlite3.Connection) -> list[tuple[int, str, int]]:
-    """List all sources with their IDs and chunk counts. Returns list of (source_id, source_path, count) tuples."""
+def get_source_summary(conn: sqlite3.Connection, source_id: int) -> str | None:
+    """Get the document summary for a source. Returns None if not set."""
+    init_db(conn)
+    row = conn.execute("SELECT summary FROM sources WHERE id = ?", (source_id,)).fetchone()
+    if row and row["summary"] and str(row["summary"]).strip():
+        return str(row["summary"]).strip()
+    return None
+
+
+def get_source_summary_by_path(conn: sqlite3.Connection, source_path: str) -> str | None:
+    """Get the document summary for a source by source_path. Returns None if not set or not found."""
+    init_db(conn)
+    row = conn.execute("SELECT summary FROM sources WHERE source_path = ?", (source_path,)).fetchone()
+    if row and row["summary"] and str(row["summary"]).strip():
+        return str(row["summary"]).strip()
+    return None
+
+
+def set_source_summary(conn: sqlite3.Connection, source_id: int, summary: str | None) -> None:
+    """Set the document summary for a source."""
+    init_db(conn)
+    summary = (summary or "").strip() or None
+    conn.execute("UPDATE sources SET summary = ? WHERE id = ?", (summary, source_id))
+
+
+def list_sources(conn: sqlite3.Connection) -> list[tuple[int, str, int, str | None]]:
+    """List all sources with their IDs, paths, chunk counts, and summary. Returns list of (source_id, source_path, count, summary)."""
     init_db(conn)
     _migrate_sources_table(conn)  # Ensure migration is done
     
-    # Use sources table (should be populated after migration)
     rows = conn.execute("""
-        SELECT s.id, s.source_path, COUNT(c.id) as count
+        SELECT s.id, s.source_path, s.summary, COUNT(c.id) as count
         FROM sources s
         LEFT JOIN chunks c ON c.source_id = s.id
-        GROUP BY s.id, s.source_path
+        GROUP BY s.id, s.source_path, s.summary
         ORDER BY s.id
     """).fetchall()
     
     if rows:
-        return [(row["id"], row["source_path"], row["count"]) for row in rows]
+        return [
+            (row["id"], row["source_path"], row["count"], (row["summary"] or "").strip() or None)
+            for row in rows
+        ]
     
-    # Fallback: no sources found (empty database)
     return []
 
 

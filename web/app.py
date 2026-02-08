@@ -23,10 +23,12 @@ from ragdoll_ingest.storage import (
     get_chunk_by_id,
     get_chunks_for_source,
     get_source_by_id,
+    get_source_summary,
     init_db,
     insert_chunk_at,
     list_sources,
     reindex_chunks_after_delete,
+    set_source_summary,
     update_chunk_full,
     update_chunk_text,
 )
@@ -102,6 +104,7 @@ class ChunkUpdate(BaseModel):
     primary_question_answered: str | None = None
     key_signals: list[str] | None = None
     chunk_role: str | None = None
+    exclude_from_ai_rewrite: list[str] | None = None  # e.g. ["concept", "chunk_role"]; those fields saved as-is, others from LLM
 
 
 class ChunkCreate(BaseModel):
@@ -134,7 +137,7 @@ def api_list_sources(group: str):
         gp = config.get_group_paths(safe_group)
         sources_dir = gp.sources_dir.resolve()
         out = []
-        for source_id, source_path, count in raw:
+        for source_id, source_path, count, summary in raw:
             try:
                 p = Path(source_path)
                 if p.is_absolute() and str(p).startswith(str(sources_dir)):
@@ -150,6 +153,7 @@ def api_list_sources(group: str):
                 "display_name": Path(source_path).name if source_path else f"Source {source_id}",
                 "fetch_path": fetch_path,
                 "chunk_count": count,
+                "summary": summary,
             })
         return {"sources": out}
     finally:
@@ -158,12 +162,33 @@ def api_list_sources(group: str):
 
 @app.get("/api/groups/{group}/sources/{source_id}/chunks")
 def api_list_chunks(group: str, source_id: int, page: int | None = None):
-    """List chunks (samples) for a source. Optional query: page=N to filter by page."""
+    """List chunks (samples) for a source and the source's document summary. Optional query: page=N to filter by page."""
     safe_group = config._sanitize_group(group)
     conn = _connect(safe_group)
     try:
+        init_db(conn)
         chunks = get_chunks_for_source(conn, source_id, page=page)
-        return {"chunks": chunks}
+        summary = get_source_summary(conn, source_id)
+        return {"chunks": chunks, "source_summary": summary}
+    finally:
+        conn.close()
+
+
+class SourceSummaryUpdate(BaseModel):
+    summary: str | None = None
+
+
+@app.patch("/api/groups/{group}/sources/{source_id}")
+def api_update_source_summary(group: str, source_id: int, body: SourceSummaryUpdate):
+    """Update the document summary for a source."""
+    safe_group = config._sanitize_group(group)
+    conn = _connect(safe_group)
+    try:
+        if get_source_by_id(conn, source_id) is None:
+            raise HTTPException(status_code=404, detail="Source not found")
+        set_source_summary(conn, source_id, body.summary)
+        conn.commit()
+        return {"ok": True, "source_id": source_id}
     finally:
         conn.close()
 
@@ -198,9 +223,25 @@ def api_fetch_source(group: str, path: str):
     )
 
 
+def _apply_exclude_from_ai_rewrite(
+    body: ChunkUpdate,
+    labels: dict,
+) -> tuple[str | None, str | None, str | None, list[str] | None, str | None]:
+    """Apply exclude_from_ai_rewrite: use body value for excluded fields, else labels from LLM."""
+    excluded = set(body.exclude_from_ai_rewrite or [])
+    concept = (body.concept or "").strip() or None if "concept" in excluded else (labels.get("concept") or "").strip() or None
+    decision_context = (body.decision_context or "").strip() or None if "decision_context" in excluded else (labels.get("decision_context") or "").strip() or None
+    primary_question_answered = (body.primary_question_answered or "").strip() or None if "primary_question_answered" in excluded else (labels.get("primary_question_answered") or "").strip() or None
+    key_signals = body.key_signals if "key_signals" in excluded else (labels.get("key_signals") or [])
+    chunk_role = (body.chunk_role or "").strip() or None if "chunk_role" in excluded else (labels.get("chunk_role") or "").strip() or None
+    if key_signals is not None and not isinstance(key_signals, list):
+        key_signals = [key_signals] if key_signals else []
+    return concept, decision_context, primary_question_answered, key_signals, chunk_role
+
+
 @app.patch("/api/groups/{group}/chunks/{chunk_id}")
 def api_update_chunk(group: str, chunk_id: int, body: ChunkUpdate):
-    """Update chunk text; re-run LLM for semantic labels and re-embed."""
+    """Update chunk text; re-run LLM for semantic labels (unless excluded per field) and re-embed."""
     safe_group = config._sanitize_group(group)
     conn = _connect(safe_group)
     try:
@@ -208,12 +249,8 @@ def api_update_chunk(group: str, chunk_id: int, body: ChunkUpdate):
         if not row:
             raise HTTPException(status_code=404, detail="Chunk not found")
         labels = extract_chunk_semantic_labels(body.text, group=safe_group)
-        concept = (labels.get("concept") or "").strip() or None
-        decision_context = (labels.get("decision_context") or "").strip() or None
-        primary_question_answered = (labels.get("primary_question_answered") or "").strip() or None
-        key_signals = labels.get("key_signals") or []
-        chunk_role = (labels.get("chunk_role") or "").strip() or None
-        to_embed = _text_to_embed(body.text, concept or "", decision_context or "", primary_question_answered or "", key_signals, chunk_role or "")
+        concept, decision_context, primary_question_answered, key_signals, chunk_role = _apply_exclude_from_ai_rewrite(body, labels)
+        to_embed = _text_to_embed(body.text, concept or "", decision_context or "", primary_question_answered or "", key_signals or [], chunk_role or "")
         embs = embed([to_embed], group=safe_group)
         if not embs:
             raise HTTPException(status_code=500, detail="Embedding failed")

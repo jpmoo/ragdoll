@@ -307,12 +307,9 @@ def _process_one(fpath: Path) -> None:
         _move_to(p, root, config.FAILED_SUBDIR, group)
         return
 
-    # Document summary: only on first chunk; when creating it, first chunk already has semantic labels
+    # Document summary: store on source only (not appended to any chunk)
     document_text = "\n\n".join(c["text"] for c in chunks_list)
     doc_summary = summarize_document(document_text, group=group, filename=p.name)
-    if doc_summary and chunks_list:
-        suffix = "\n\n[SUMMARY of " + p.name + ": " + doc_summary + "]"
-        chunks_list[0]["text"] = chunks_list[0]["text"] + suffix
 
     def _text_to_embed(c: dict) -> str:
         """Chunk text plus semantic fields so the embedding captures labels too."""
@@ -351,7 +348,7 @@ def _process_one(fpath: Path) -> None:
 
     conn = _connect(group)
     try:
-        add_chunks(conn, str(dest), p.suffix.lower(), chunks_list)
+        add_chunks(conn, str(dest), p.suffix.lower(), chunks_list, doc_summary=doc_summary or None)
         conn.commit()
     finally:
         conn.close()

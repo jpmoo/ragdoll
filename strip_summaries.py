@@ -78,7 +78,7 @@ def main() -> None:
                 logger.info("[%s] no sources", group)
                 continue
             logger.info("[%s] %d source(s)", group, len(sources))
-            for source_id, source_path, _ in sources:
+            for source_id, source_path, _, _ in sources:
                 chunks = get_chunks_for_source(conn, source_id)
                 if not chunks:
                     continue

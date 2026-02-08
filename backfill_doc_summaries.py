@@ -165,7 +165,7 @@ def main() -> None:
                 logger.info("[%s] no sources", group)
                 continue
             logger.info("[%s] %d source(s)", group, len(sources))
-            for source_id, source_path, count in sources:
+            for source_id, source_path, count, _ in sources:
                 updated = backfill_one_source(conn, group, source_id, source_path, do_over)
                 if updated:
                     conn.commit()

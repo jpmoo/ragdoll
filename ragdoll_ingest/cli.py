@@ -51,7 +51,7 @@ def cmd_list(args: argparse.Namespace) -> int:
         print(f"{'ID':<6} {'Filename':<60} {'Chunks':<10}")
         print("-" * 80)
         total_chunks = 0
-        for source_id, source_path, count in sources:
+        for source_id, source_path, count, _ in sources:
             # Extract just the filename from the path
             from pathlib import Path
             filename = Path(source_path).name

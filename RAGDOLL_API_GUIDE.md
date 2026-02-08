@@ -227,6 +227,9 @@ When `limit_chunk_role` is true, the server sends your prompt and any `history` 
       "source_name": "Visualizing Double-loop Learning.pdf",
       "source_type": ".pdf",
       "chunk_index": 12,
+      "source_summary": "This PDF explains double-loop learning and its role in organizational change.",
+      "context_index": 1,
+      "context_total": 2,
       "text": "Double-loop learning involves questioning underlying assumptions...",
       "artifact_type": "text",
       "artifact_path": null,
@@ -267,6 +270,9 @@ Each result in the `results` array contains:
 - **`source_url`**: HTTP URL to fetch the source document (e.g., `/fetch/edleadership/document.pdf`)
 - **`source_type`**: File extension (e.g., `.pdf`, `.docx`)
 - **`chunk_index`**: Index of this chunk within the source document
+- **`source_summary`**: The document's 1–3 sentence summary (if set during ingest); `null` if none
+- **`context_index`**: 1-based position of this chunk among results from the same document (e.g. 1, 2, 3)
+- **`context_total`**: Total number of result chunks from this document (e.g. 3 → "1 of 3", "2 of 3", "3 of 3")
 - **`text`**: The actual text content (cleaned, no newlines)
 - **`artifact_type`**: Type of content:
   - `"text"`: Regular prose text
@@ -277,6 +283,9 @@ Each result in the `results` array contains:
 - **`page`**: Page number (for PDFs), `null` for non-paginated documents
 - **`chunk_role`**: Role assigned during ingest (e.g. `description`, `application`, `implication`), or `null` if none
 - **`similarity`**: Cosine similarity score (0.0-1.0), higher = more relevant
+
+**Presenting results:** For each result you can show the document summary and numbering, e.g.  
+*"3 pieces of context come from a document with this summary: \"{source_summary}\""* and label each chunk *"Chunk 1 of 3"*, *"Chunk 2 of 3"*, *"Chunk 3 of 3"* using `context_index` and `context_total`. Results from the same source share the same `source_summary` and `context_total`; `context_index` is 1-based within that source.
 
 When `limit_chunk_role` was true and role filtering was applied, the response also includes:
 - **`limit_chunk_role`**: `true`

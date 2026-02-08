@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from . import config
 from .embedder import embed
 from .interpreters import CHUNK_ROLES
-from .storage import _connect, _list_sync_groups, clean_text, init_db
+from .storage import _connect, _list_sync_groups, clean_text, get_source_summary_by_path, init_db
 from .config import get_group_paths, _sanitize_group
 
 logger = logging.getLogger(__name__)
@@ -285,6 +285,35 @@ def _run_retrieval(
     return results
 
 
+def _enrich_results_with_summary_and_context_index(
+    results: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Add source_summary, context_index (1 of X), and context_total (X) to each result."""
+    if not results:
+        return results
+    keys = set((r["group"], r["source_path"]) for r in results)
+    key_to_summary: dict[tuple[str, str], str | None] = {}
+    for group in set(g for g, _ in keys):
+        conn = _connect(group)
+        try:
+            for source_path in [p for g, p in keys if g == group]:
+                key_to_summary[(group, source_path)] = get_source_summary_by_path(conn, source_path)
+        finally:
+            conn.close()
+    key_to_count: dict[tuple[str, str], int] = {}
+    for r in results:
+        k = (r["group"], r["source_path"])
+        key_to_count[k] = key_to_count.get(k, 0) + 1
+    key_to_index: dict[tuple[str, str], int] = {}
+    for r in results:
+        k = (r["group"], r["source_path"])
+        key_to_index[k] = key_to_index.get(k, 0) + 1
+        r["source_summary"] = key_to_summary.get(k)
+        r["context_index"] = key_to_index[k]
+        r["context_total"] = key_to_count[k]
+    return results
+
+
 def _do_query(
     prompt: str,
     history: str | None,
@@ -347,6 +376,9 @@ def _do_query(
         )
         all_results = _run_retrieval(groups, query_emb, threshold, None)
         role_filter_relaxed = True
+
+    # Enrich results with document summary and context numbering (1 of X, 2 of X per source)
+    all_results = _enrich_results_with_summary_and_context_index(all_results)
 
     out: dict[str, Any] = {
         "query": prompt,
