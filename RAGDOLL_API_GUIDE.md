@@ -214,41 +214,64 @@ When `limit_chunk_role` is true, the server sends your prompt and any `history` 
 
 ### Response Structure
 
+Results are returned in two forms:
+
+1. **`documents`** — Grouped by source: each document has its summary and metadata, then its samples (1 of X, 2 of X). Use this to display “X pieces of context from a document with this summary” and “Chunk 1 of X”, “Chunk 2 of X”.
+2. **`results`** — Flat list of all chunks sorted by similarity (same as before, for backward compatibility).
+
+**Example (`documents` structure):**
+
 ```json
 {
   "query": "What is double-loop learning?",
-  "expanded_query": "The user is seeking information about double-loop learning, a concept in organizational learning theory...",
+  "expanded_query": "The user is seeking information about double-loop learning...",
   "threshold": 0.45,
   "count": 5,
-  "results": [
+  "documents": [
     {
       "group": "edleadership",
-      "source_path": "/mnt/media/ragdoll/data/edleadership/sources/Visualizing Double-loop Learning.pdf",
+      "source_path": "/mnt/.../Visualizing Double-loop Learning.pdf",
       "source_name": "Visualizing Double-loop Learning.pdf",
       "source_type": ".pdf",
-      "chunk_index": 12,
+      "source_url": "/fetch/edleadership/Visualizing%20Double-loop%20Learning.pdf",
       "source_summary": "This PDF explains double-loop learning and its role in organizational change.",
-      "context_index": 1,
-      "context_total": 2,
-      "text": "Double-loop learning involves questioning underlying assumptions...",
-      "artifact_type": "text",
-      "artifact_path": null,
-      "page": 3,
-      "chunk_role": "description",
-      "similarity": 0.8234
+      "sample_count": 2,
+      "samples": [
+        {
+          "chunk_index": 12,
+          "context_index": 1,
+          "context_total": 2,
+          "text": "Double-loop learning involves questioning underlying assumptions...",
+          "artifact_type": "text",
+          "page": 3,
+          "chunk_role": "description",
+          "similarity": 0.8234
+        },
+        {
+          "chunk_index": 14,
+          "context_index": 2,
+          "context_total": 2,
+          "text": "In contrast to single-loop learning...",
+          "similarity": 0.8012
+        }
+      ]
     },
     {
       "group": "edleadership",
-      "source_path": "/mnt/media/ragdoll/data/edleadership/sources/SEQuity Teacher Reference.pdf",
       "source_name": "SEQuity Teacher Reference.pdf",
-      "source_type": ".pdf",
-      "chunk_index": 5,
-      "text": "In contrast to single-loop learning, double-loop learning...",
-      "artifact_type": "text",
-      "page": 1,
-      "similarity": 0.7123
+      "source_summary": null,
+      "sample_count": 1,
+      "samples": [
+        {
+          "context_index": 1,
+          "context_total": 1,
+          "text": "...",
+          "similarity": 0.7123
+        }
+      ]
     }
-  ]
+  ],
+  "results": [ ... ]
 }
 ```
 
@@ -257,8 +280,9 @@ When `limit_chunk_role` is true, the server sends your prompt and any `history` 
 - **`query`**: Your original prompt
 - **`expanded_query`**: LLM-expanded standalone description (used for embedding)
 - **`threshold`**: Similarity threshold that was applied
-- **`count`**: Number of results returned
-- **`results`**: Array of matching chunks, sorted by similarity (highest first)
+- **`count`**: Total number of chunks returned
+- **`documents`**: Array of document blocks. Each block has: **`group`**, **`source_path`**, **`source_name`**, **`source_url`**, **`source_type`**, **`source_summary`** (document summary or null), **`sample_count`**, **`samples`** (array of chunks from that document with **`context_index`** (1 of X), **`context_total`** (X), **`text`**, **`similarity`**, etc.). Documents are ordered by best similarity in that document.
+- **`results`**: Flat array of all chunks, sorted by similarity (for backward compatibility)
 
 ### Result Object Fields
 
@@ -284,8 +308,7 @@ Each result in the `results` array contains:
 - **`chunk_role`**: Role assigned during ingest (e.g. `description`, `application`, `implication`), or `null` if none
 - **`similarity`**: Cosine similarity score (0.0-1.0), higher = more relevant
 
-**Presenting results:** For each result you can show the document summary and numbering, e.g.  
-*"3 pieces of context come from a document with this summary: \"{source_summary}\""* and label each chunk *"Chunk 1 of 3"*, *"Chunk 2 of 3"*, *"Chunk 3 of 3"* using `context_index` and `context_total`. Results from the same source share the same `source_summary` and `context_total`; `context_index` is 1-based within that source.
+**Presenting results:** Prefer the **`documents`** array for a document-first UX. For each document, show its summary and metadata, then list its samples with labels like *"Sample 1 of 3"*, *"Sample 2 of 3"* using each sample’s `context_index` and `context_total`. Documents are ordered by relevance (best similarity in that document). If you use the flat **`results`** list instead, group by `(group, source_path)` and use `source_summary`, `context_index`, and `context_total` on each result for the same labels.
 
 When `limit_chunk_role` was true and role filtering was applied, the response also includes:
 - **`limit_chunk_role`**: `true`

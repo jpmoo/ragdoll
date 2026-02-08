@@ -561,6 +561,7 @@ def get_source_summary(conn: sqlite3.Connection, source_id: int) -> str | None:
 def get_source_summary_by_path(conn: sqlite3.Connection, source_path: str) -> str | None:
     """Get the document summary for a source by source_path. Returns None if not set or not found."""
     init_db(conn)
+    _migrate_sources_table(conn)  # Ensure sources table is populated from chunks before lookup
     row = conn.execute("SELECT summary FROM sources WHERE source_path = ?", (source_path,)).fetchone()
     if row and row["summary"] and str(row["summary"]).strip():
         return str(row["summary"]).strip()

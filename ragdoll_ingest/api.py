@@ -314,6 +314,39 @@ def _enrich_results_with_summary_and_context_index(
     return results
 
 
+def _group_results_by_document(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Group flat results by (group, source_path) into document blocks: document info + summary, then samples (1 of X, 2 of X)."""
+    if not results:
+        return []
+    key_to_samples: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for r in results:
+        k = (r["group"], r["source_path"])
+        if k not in key_to_samples:
+            key_to_samples[k] = []
+        key_to_samples[k].append(r)
+    # Build document list: order by best similarity in each document (so most relevant docs first)
+    doc_list: list[dict[str, Any]] = []
+    for k, samples in key_to_samples.items():
+        group_name, source_path = k
+        best_sim = max(s["similarity"] for s in samples)
+        doc_list.append((best_sim, group_name, source_path, samples))
+    doc_list.sort(key=lambda x: x[0], reverse=True)
+    out: list[dict[str, Any]] = []
+    for _best_sim, group_name, source_path, samples in doc_list:
+        first = samples[0]
+        out.append({
+            "group": group_name,
+            "source_path": source_path,
+            "source_name": first["source_name"],
+            "source_url": first["source_url"],
+            "source_type": first["source_type"],
+            "source_summary": first.get("source_summary"),
+            "samples": samples,
+            "sample_count": len(samples),
+        })
+    return out
+
+
 def _do_query(
     prompt: str,
     history: str | None,
@@ -380,10 +413,14 @@ def _do_query(
     # Enrich results with document summary and context numbering (1 of X, 2 of X per source)
     all_results = _enrich_results_with_summary_and_context_index(all_results)
 
+    # Group by document: each entry has document info + summary and samples (1 of X, 2 of X)
+    documents = _group_results_by_document(all_results)
+
     out: dict[str, Any] = {
         "query": prompt,
         "expanded_query": expanded,
         "threshold": threshold,
+        "documents": documents,
         "results": all_results,
         "count": len(all_results),
     }
