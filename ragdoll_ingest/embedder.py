@@ -10,6 +10,24 @@ from .action_log import log as action_log
 logger = logging.getLogger(__name__)
 
 
+def build_text_to_embed(
+    document_summary: str | None,
+    primary_question_answered: str | None,
+    chunk_text: str,
+) -> str:
+    """
+    Build the single string we embed for a chunk: document summary + primary question + chunk body.
+    Used at ingest and whenever summary, primary question, or chunk text changes (re-embed).
+    """
+    parts = []
+    if document_summary and (s := (document_summary or "").strip()):
+        parts.append(s)
+    if primary_question_answered and (q := (primary_question_answered or "").strip()):
+        parts.append("Primary question answered: " + q)
+    parts.append((chunk_text or "").strip() or "")
+    return "\n\n".join(parts)
+
+
 def embed(texts: list[str], base_url: str | None = None, group: str = "_root") -> list[list[float]]:
     """
     Embed a list of texts. Returns list of embedding vectors.

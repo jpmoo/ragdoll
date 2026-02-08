@@ -14,7 +14,7 @@ from . import config
 from .action_log import log as action_log
 from .artifacts import store_chart_image, store_figure, store_table
 from .chunker import _clean_for_chunking, chunk_text, chunk_text_semantic
-from .embedder import embed
+from .embedder import build_text_to_embed, embed
 from .garbage_control import filter_chunks
 from .extractors import extract_document, extract_text, ocr_image_bytes
 from .interpreters import (
@@ -312,19 +312,12 @@ def _process_one(fpath: Path) -> None:
     doc_summary = summarize_document(document_text, group=group, filename=p.name)
 
     def _text_to_embed(c: dict) -> str:
-        """Chunk text plus semantic fields so the embedding captures labels too."""
-        parts = [c["text"]]
-        if c.get("concept"):
-            parts.append("Concept: " + c["concept"])
-        if c.get("decision_context"):
-            parts.append("Decision context: " + c["decision_context"])
-        if c.get("primary_question_answered"):
-            parts.append("Primary question answered: " + c["primary_question_answered"])
-        if c.get("key_signals"):
-            parts.append("Key signals: " + ", ".join(c["key_signals"]))
-        if c.get("chunk_role"):
-            parts.append("Chunk role: " + c["chunk_role"])
-        return "\n\n".join(parts)
+        """Document summary + primary question + chunk body (only these are embedded)."""
+        return build_text_to_embed(
+            doc_summary,
+            c.get("primary_question_answered"),
+            c["text"],
+        )
 
     action_log("chunk_ok", file=str(p), num_chunks=len(chunks_list), group=group)
     try:

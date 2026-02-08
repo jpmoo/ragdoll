@@ -14,7 +14,7 @@ from starlette.requests import Request
 # Run from project root so ragdoll_ingest is on path
 from ragdoll_ingest import config
 from ragdoll_ingest.config import get_env
-from ragdoll_ingest.embedder import embed
+from ragdoll_ingest.embedder import build_text_to_embed, embed
 from ragdoll_ingest.interpreters import extract_chunk_semantic_labels
 from ragdoll_ingest.storage import (
     _connect,
@@ -29,6 +29,7 @@ from ragdoll_ingest.storage import (
     list_sources,
     reindex_chunks_after_delete,
     set_source_summary,
+    update_chunk_embedding,
     update_chunk_full,
     update_chunk_text,
 )
@@ -80,22 +81,6 @@ if REVIEW_USER and REVIEW_PASSWORD:
 
 
 # --- API ---
-
-def _text_to_embed(text: str, concept: str = "", decision_context: str = "", primary_question_answered: str = "", key_signals: list | None = None, chunk_role: str = "") -> str:
-    """Build string to embed: chunk text plus semantic fields (same as ingest)."""
-    parts = [text or ""]
-    if concept:
-        parts.append("Concept: " + concept)
-    if decision_context:
-        parts.append("Decision context: " + decision_context)
-    if primary_question_answered:
-        parts.append("Primary question answered: " + primary_question_answered)
-    if key_signals:
-        parts.append("Key signals: " + ", ".join(key_signals))
-    if chunk_role:
-        parts.append("Chunk role: " + chunk_role)
-    return "\n\n".join(parts)
-
 
 class ChunkUpdate(BaseModel):
     text: str
@@ -180,13 +165,29 @@ class SourceSummaryUpdate(BaseModel):
 
 @app.patch("/api/groups/{group}/sources/{source_id}")
 def api_update_source_summary(group: str, source_id: int, body: SourceSummaryUpdate):
-    """Update the document summary for a source."""
+    """Update the document summary for a source and re-embed all chunks in that document."""
     safe_group = config._sanitize_group(group)
     conn = _connect(safe_group)
     try:
         if get_source_by_id(conn, source_id) is None:
             raise HTTPException(status_code=404, detail="Source not found")
         set_source_summary(conn, source_id, body.summary)
+        summary = (body.summary or "").strip() or ""
+        chunks = get_chunks_for_source(conn, source_id)
+        if chunks:
+            to_embed_list = [
+                build_text_to_embed(
+                    summary,
+                    c.get("primary_question_answered"),
+                    c.get("text") or "",
+                )
+                for c in chunks
+            ]
+            embs = embed(to_embed_list, group=safe_group)
+            if len(embs) != len(chunks):
+                raise HTTPException(status_code=500, detail="Embedding count mismatch")
+            for c, emb in zip(chunks, embs):
+                update_chunk_embedding(conn, c["id"], emb)
         conn.commit()
         return {"ok": True, "source_id": source_id}
     finally:
@@ -250,7 +251,8 @@ def api_update_chunk(group: str, chunk_id: int, body: ChunkUpdate):
             raise HTTPException(status_code=404, detail="Chunk not found")
         labels = extract_chunk_semantic_labels(body.text, group=safe_group)
         concept, decision_context, primary_question_answered, key_signals, chunk_role = _apply_exclude_from_ai_rewrite(body, labels)
-        to_embed = _text_to_embed(body.text, concept or "", decision_context or "", primary_question_answered or "", key_signals or [], chunk_role or "")
+        summary = get_source_summary(conn, row["source_id"]) or ""
+        to_embed = build_text_to_embed(summary, primary_question_answered, body.text)
         embs = embed([to_embed], group=safe_group)
         if not embs:
             raise HTTPException(status_code=500, detail="Embedding failed")
@@ -298,7 +300,8 @@ def _join_chunk_with_neighbor(
     primary_question_answered = (labels.get("primary_question_answered") or "").strip() or None
     key_signals = labels.get("key_signals") or []
     chunk_role = (labels.get("chunk_role") or "").strip() or None
-    to_embed = _text_to_embed(merged_text, concept or "", decision_context or "", primary_question_answered or "", key_signals, chunk_role or "")
+    summary = get_source_summary(conn, source_id) or ""
+    to_embed = build_text_to_embed(summary, primary_question_answered, merged_text)
     embs = embed([to_embed], group=safe_group)
     if not embs:
         raise HTTPException(status_code=500, detail="Embedding failed")
@@ -343,40 +346,41 @@ def api_join_chunk_below(group: str, chunk_id: int):
 def api_create_chunk(group: str, source_id: int, body: ChunkCreate):
     """Insert a new chunk above or below an index, with optional semantic fields."""
     safe_group = config._sanitize_group(group)
-    src = get_source_by_id(_connect(safe_group), source_id)
-    if not src:
-        raise HTTPException(status_code=404, detail="Source not found")
-    source_path, source_type = src
-    if body.after_index is not None:
-        at_index = body.after_index + 1
-    elif body.before_index is not None:
-        at_index = body.before_index
-    else:
-        at_index = 0
-    concept = (body.concept or "").strip()
-    decision_context = (body.decision_context or "").strip()
-    primary_question_answered = (body.primary_question_answered or "").strip()
-    key_signals = body.key_signals or []
-    chunk_role = (body.chunk_role or "").strip()
-    # Fill in any semantic fields the user left empty via LLM
-    if not concept or not decision_context or not primary_question_answered or not key_signals or not chunk_role:
-        labels = extract_chunk_semantic_labels(body.text, group=safe_group)
-        if not concept and labels.get("concept"):
-            concept = (labels["concept"] or "").strip()
-        if not decision_context and labels.get("decision_context"):
-            decision_context = (labels["decision_context"] or "").strip()
-        if not primary_question_answered and labels.get("primary_question_answered"):
-            primary_question_answered = (labels["primary_question_answered"] or "").strip()
-        if not key_signals and labels.get("key_signals"):
-            key_signals = labels["key_signals"] or []
-        if not chunk_role and labels.get("chunk_role"):
-            chunk_role = (labels["chunk_role"] or "").strip()
-    to_embed = _text_to_embed(body.text, concept, decision_context, primary_question_answered, key_signals, chunk_role)
-    embs = embed([to_embed], group=safe_group)
-    if not embs:
-        raise HTTPException(status_code=500, detail="Embedding failed")
     conn = _connect(safe_group)
     try:
+        src = get_source_by_id(conn, source_id)
+        if not src:
+            raise HTTPException(status_code=404, detail="Source not found")
+        source_path, source_type = src
+        if body.after_index is not None:
+            at_index = body.after_index + 1
+        elif body.before_index is not None:
+            at_index = body.before_index
+        else:
+            at_index = 0
+        concept = (body.concept or "").strip()
+        decision_context = (body.decision_context or "").strip()
+        primary_question_answered = (body.primary_question_answered or "").strip()
+        key_signals = body.key_signals or []
+        chunk_role = (body.chunk_role or "").strip()
+        # Fill in any semantic fields the user left empty via LLM
+        if not concept or not decision_context or not primary_question_answered or not key_signals or not chunk_role:
+            labels = extract_chunk_semantic_labels(body.text, group=safe_group)
+            if not concept and labels.get("concept"):
+                concept = (labels["concept"] or "").strip()
+            if not decision_context and labels.get("decision_context"):
+                decision_context = (labels["decision_context"] or "").strip()
+            if not primary_question_answered and labels.get("primary_question_answered"):
+                primary_question_answered = (labels["primary_question_answered"] or "").strip()
+            if not key_signals and labels.get("key_signals"):
+                key_signals = labels["key_signals"] or []
+            if not chunk_role and labels.get("chunk_role"):
+                chunk_role = (labels["chunk_role"] or "").strip()
+        summary = get_source_summary(conn, source_id) or ""
+        to_embed = build_text_to_embed(summary, primary_question_answered or None, body.text)
+        embs = embed([to_embed], group=safe_group)
+        if not embs:
+            raise HTTPException(status_code=500, detail="Embedding failed")
         new_id = insert_chunk_at(
             conn, source_id, source_path, source_type, at_index, body.text, embs[0],
             page=None, artifact_type="text", artifact_path=None,

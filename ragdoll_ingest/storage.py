@@ -680,6 +680,14 @@ def update_chunk_text(
     )
 
 
+def update_chunk_embedding(
+    conn: sqlite3.Connection, chunk_id: int, embedding: list[float]
+) -> None:
+    """Update only the embedding for a chunk (e.g. after document summary or re-embed migration)."""
+    init_db(conn)
+    conn.execute("UPDATE chunks SET embedding = ? WHERE id = ?", (json.dumps(embedding), chunk_id))
+
+
 def update_chunk_full(
     conn: sqlite3.Connection,
     chunk_id: int,
