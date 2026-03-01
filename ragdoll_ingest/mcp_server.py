@@ -130,11 +130,20 @@ def main() -> None:
     mcp = _make_mcp()
     transport = config.MCP_TRANSPORT
     if transport == "sse":
-        mcp.run(
-            transport="sse",
+        # Official MCP SDK run() does not accept host/port; serve SSE app with uvicorn instead.
+        import uvicorn
+        sse_app = mcp.sse_app("/mcp")
+        try:
+            from starlette.applications import Starlette
+            from starlette.routing import Mount
+            app = Starlette(routes=[Mount("/mcp", app=sse_app)])
+        except ImportError:
+            app = sse_app  # serve at / if Starlette not available
+        uvicorn.run(
+            app,
             host=config.MCP_HOST,
             port=config.MCP_PORT,
-            mount_path="/mcp",
+            log_level="info",
         )
     else:
         mcp.run()
