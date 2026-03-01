@@ -1,0 +1,27 @@
+[Unit]
+Description=RAGDoll MCP Server (HTTP/SSE)
+After=network.target ragdoll-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/opt/ragdoll/env.ragdoll
+EnvironmentFile=-/etc/default/ragdoll-ingest
+Environment=RAGDOLL_MCP_TRANSPORT=sse
+# Override via: systemctl edit ragdoll-mcp
+#   [Service]
+#   Environment="RAGDOLL_MCP_HOST=127.0.0.1"
+#   Environment="RAGDOLL_MCP_PORT=9044"
+#   WorkingDirectory=/opt/ragdoll
+#   ExecStart=/opt/ragdoll/.venv/bin/python -m ragdoll_ingest.mcp_server
+
+WorkingDirectory=/opt/ragdoll
+ExecStart=/opt/ragdoll/.venv/bin/python -m ragdoll_ingest.mcp_server
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ragdoll-mcp
+
+[Install]
+WantedBy=multi-user.target

@@ -105,6 +105,11 @@ QUERY_MODEL = get_env("RAGDOLL_QUERY_MODEL") or "llama3.2:3b"
 # API server
 API_PORT = int(get_env("RAGDOLL_API_PORT") or "9042")
 
+# MCP server (stdio or sse)
+MCP_TRANSPORT = (get_env("RAGDOLL_MCP_TRANSPORT") or "stdio").lower()
+MCP_HOST = get_env("RAGDOLL_MCP_HOST") or "127.0.0.1"
+MCP_PORT = int(get_env("RAGDOLL_MCP_PORT") or "9044")
+
 # Logging: DEBUG, INFO, WARNING, ERROR. Default DEBUG. Set RAGDOLL_LOG_LEVEL=INFO to reduce verbosity.
 LOG_LEVEL = (get_env("RAGDOLL_LOG_LEVEL") or "DEBUG").upper()
 

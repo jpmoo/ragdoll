@@ -24,10 +24,12 @@ dependencies = [
 
 [project.optional-dependencies]
 docling = ["docling>=2.0.0", "pandas>=2.0.0"]
+mcp = ["mcp[cli]>=1.0.0"]
 
 [project.scripts]
 ragdoll-ingest = "ragdoll_ingest.__main__:main"
 ragdoll = "ragdoll_ingest.cli:main"
+ragdoll-mcp = "ragdoll_ingest.mcp_server:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

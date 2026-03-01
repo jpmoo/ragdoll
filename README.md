@@ -238,10 +238,12 @@ sudo systemctl enable --now ragdoll-api
 
 The API server listens on port `9042` by default (configurable via `RAGDOLL_API_PORT`).
 
-**All three services (ingest, API, review web)** can be installed together so they start on boot and listen on their ports:
+**Ingest, API, and review web** can be installed together so they start on boot. Optionally include **ragdoll-mcp.service** for the MCP server (SSE mode):
 
 ```bash
 sudo cp ragdoll-ingest.service ragdoll-api.service ragdoll-web.service /etc/systemd/system/
+# Optional: MCP server (requires pip install -e '.[mcp]' and RAGDOLL_MCP_TRANSPORT=sse in env.ragdoll)
+# sudo cp ragdoll-mcp.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now ragdoll-ingest ragdoll-api ragdoll-web
 ```
@@ -305,6 +307,55 @@ Response includes:
 - `count`: Number of results
 - `results`: Array of matching chunks (sorted by similarity, highest first), each with: `group`, `source_path`, `source_name`, `source_type`, `chunk_index`, `text`, `artifact_type`, `artifact_path`, `page`, `chunk_role`, `similarity`
 - When role filtering was applied: `limit_chunk_role`: true, `inferred_roles`: list of inferred roles
+
+## MCP Server (optional)
+
+An **MCP (Model Context Protocol) server** lets MCP-capable clients (Claude Desktop, Cursor, Zed, etc.) query RAGDoll collections as tools—no HTTP wiring on the client. Install the optional dependency:
+
+```bash
+pip install -e '.[mcp]'
+```
+
+**Transport options:**
+
+- **stdio (default)** — The client spawns `ragdoll-mcp` as a subprocess; communication is over stdin/stdout. Use for local clients (e.g. Claude Desktop, Claude Code). No open port. Config via `RAGDOLL_ENV` or project-root `env.ragdoll`.
+- **SSE** — HTTP/SSE server for remote or multi-user use. Set `RAGDOLL_MCP_TRANSPORT=sse` in `env.ragdoll`. The server binds to `RAGDOLL_MCP_HOST` (default `127.0.0.1`) and `RAGDOLL_MCP_PORT` (default `9044`). Put behind a reverse proxy with auth if exposing externally.
+
+**Config in `env.ragdoll`:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RAGDOLL_MCP_TRANSPORT` | `stdio` | `stdio` = local subprocess; `sse` = HTTP/SSE server |
+| `RAGDOLL_MCP_HOST` | `127.0.0.1` | Bind host when using SSE |
+| `RAGDOLL_MCP_PORT` | `9044` | Bind port when using SSE |
+
+**Run as a systemd service (SSE mode):**
+
+```bash
+# Ensure env.ragdoll has RAGDOLL_MCP_TRANSPORT=sse (or set in the unit)
+sudo cp ragdoll-mcp.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now ragdoll-mcp
+```
+
+**Client setup (stdio):**
+
+- **Claude Desktop** — Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or equivalent:
+  ```json
+  {
+    "mcpServers": {
+      "ragdoll": {
+        "command": "/opt/ragdoll/.venv/bin/ragdoll-mcp",
+        "env": { "RAGDOLL_ENV": "/opt/ragdoll/env.ragdoll" }
+      }
+    }
+  }
+  ```
+- **Cursor / Claude Code** — Add the same block to your project’s `.mcp.json` or global MCP config.
+
+**Tools:** `list_collections` (list available collections), `query_rag` (semantic search with optional `prompt`, `history`, `threshold`, `collections`, `limit_chunk_role`, `max_results`). Optional resources: `ragdoll://collections`, `ragdoll://collections/{group}/sources`.
+
+**All four services (ingest, API, review web, MCP)** can be installed together; copy `ragdoll-mcp.service` along with the others and enable/start as needed.
 
 ## Review web app
 
