@@ -131,11 +131,17 @@ def main() -> None:
     transport = config.MCP_TRANSPORT
     if transport == "sse":
         # Official MCP SDK run() does not accept host/port; serve SSE app with uvicorn instead.
-        # Pass mount path to sse_app so it serves at /mcp/sse and /mcp/messages and returns correct endpoint URL (no double path).
+        # Mount at /mcp so we serve /mcp/sse and /mcp/messages. SDK sse_app("/mcp") can return endpoint with duplicated path (/mcp/mcp/messages); if so, fix in Caddy with: uri replace path /mcp/mcp /mcp before proxying to 9044.
         import uvicorn
         sse_app = mcp.sse_app("/mcp")
+        try:
+            from starlette.applications import Starlette
+            from starlette.routing import Mount
+            app = Starlette(routes=[Mount("/mcp", app=sse_app)])
+        except ImportError:
+            app = sse_app
         uvicorn.run(
-            sse_app,
+            app,
             host=config.MCP_HOST,
             port=config.MCP_PORT,
             log_level="info",
