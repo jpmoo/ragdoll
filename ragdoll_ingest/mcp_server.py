@@ -29,7 +29,6 @@ def _make_mcp() -> "FastMCP":
             "Use query_rag to find relevant content. Use list_collections to discover "
             "what collections are available before querying a specific one."
         ),
-        streamable_http_path="/",  # so when mounted at /mcp, POST /mcp/ is handled (path /)
     )
 
     @mcp.tool()
