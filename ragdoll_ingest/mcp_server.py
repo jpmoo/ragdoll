@@ -126,20 +126,28 @@ def _make_mcp() -> "FastMCP":
 
 
 def main() -> None:
-    """Entry point: run MCP server in stdio or SSE mode from RAGDOLL_MCP_TRANSPORT."""
+    """Entry point: run MCP server in stdio, SSE, or streamable-http mode from RAGDOLL_MCP_TRANSPORT."""
     mcp = _make_mcp()
     transport = config.MCP_TRANSPORT
-    if transport == "sse":
-        # Official MCP SDK run() does not accept host/port; serve SSE app with uvicorn instead.
-        # Mount at /mcp so we serve /mcp/sse and /mcp/messages. SDK sse_app("/mcp") can return endpoint with duplicated path (/mcp/mcp/messages); if so, fix in Caddy with: uri replace path /mcp/mcp /mcp before proxying to 9044.
+    if transport in ("sse", "streamable-http", "http"):
         import uvicorn
-        sse_app = mcp.sse_app("/mcp")
-        try:
-            from starlette.applications import Starlette
-            from starlette.routing import Mount
-            app = Starlette(routes=[Mount("/mcp", app=sse_app)])
-        except ImportError:
-            app = sse_app
+        if transport == "streamable-http" or transport == "http":
+            # Streamable HTTP: single /mcp endpoint for GET/POST, works with Claude Desktop "Add connector". Caddy rewrites /ragdoll -> /mcp.
+            try:
+                from starlette.applications import Starlette
+                from starlette.routing import Mount
+                app = Starlette(routes=[Mount("/mcp", app=mcp.streamable_http_app())])
+            except ImportError:
+                app = mcp.streamable_http_app()
+        else:
+            # SSE: /mcp/sse and /mcp/messages
+            sse_app = mcp.sse_app("/mcp")
+            try:
+                from starlette.applications import Starlette
+                from starlette.routing import Mount
+                app = Starlette(routes=[Mount("/mcp", app=sse_app)])
+            except ImportError:
+                app = sse_app
         uvicorn.run(
             app,
             host=config.MCP_HOST,
