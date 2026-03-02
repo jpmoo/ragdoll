@@ -29,6 +29,7 @@ def _make_mcp() -> "FastMCP":
             "Use query_rag to find relevant content. Use list_collections to discover "
             "what collections are available before querying a specific one."
         ),
+        streamable_http_path="/",  # so when mounted at /mcp, POST /mcp/ is handled (path /)
     )
 
     @mcp.tool()
@@ -132,7 +133,7 @@ def main() -> None:
     if transport in ("sse", "streamable-http", "http"):
         import uvicorn
         if transport == "streamable-http" or transport == "http":
-            # Streamable HTTP: POST /mcp for session; GET /mcp/ returns 200 so Claude's base-URL probe doesn't get 404.
+            # Streamable HTTP: POST at /mcp for session (mcp-remote, Claude). When mounted at /mcp, sub-app receives path / (streamable_http_path="/" in FastMCP).
             try:
                 from starlette.applications import Starlette
                 from starlette.routing import Mount, Route
