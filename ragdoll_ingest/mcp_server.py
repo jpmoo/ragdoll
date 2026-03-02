@@ -132,11 +132,22 @@ def main() -> None:
     if transport in ("sse", "streamable-http", "http"):
         import uvicorn
         if transport == "streamable-http" or transport == "http":
-            # Streamable HTTP: single /mcp endpoint for GET/POST, works with Claude Desktop "Add connector". Caddy rewrites /ragdoll -> /mcp.
+            # Streamable HTTP: POST /mcp for session; GET /mcp/ returns 200 so Claude's base-URL probe doesn't get 404.
             try:
                 from starlette.applications import Starlette
-                from starlette.routing import Mount
-                app = Starlette(routes=[Mount("/mcp", app=mcp.streamable_http_app())])
+                from starlette.routing import Mount, Route
+                from starlette.responses import JSONResponse
+
+                def _mcp_base_ok(_request):
+                    return JSONResponse({"protocol": "mcp", "server": "ragdoll"})
+
+                app = Starlette(
+                    routes=[
+                        Route("/mcp", endpoint=_mcp_base_ok, methods=["GET"]),
+                        Route("/mcp/", endpoint=_mcp_base_ok, methods=["GET"]),
+                        Mount("/mcp", app=mcp.streamable_http_app()),
+                    ]
+                )
             except ImportError:
                 app = mcp.streamable_http_app()
         else:
