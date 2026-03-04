@@ -16,10 +16,10 @@ from .storage import (
     _connect,
     add_chunks,
     clean_text,
-    get_group_paths,
     init_db,
     set_source_summary,
 )
+from .config import get_group_paths
 
 MEMORY_GROUP = "memory"
 MEMORY_SOURCE_TYPE = "memory"

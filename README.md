@@ -338,9 +338,9 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now ragdoll-mcp
 ```
 
-**Client setup (stdio):**
+**Client setup:**
 
-- **Claude Desktop** — Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or equivalent:
+- **Local (stdio)** — Claude and RAGDoll on the same machine. Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or equivalent:
   ```json
   {
     "mcpServers": {
@@ -351,7 +351,27 @@ sudo systemctl enable --now ragdoll-mcp
     }
   }
   ```
-- **Cursor / Claude Code** — Add the same block to your project’s `.mcp.json` or global MCP config.
+- **Remote (SSE)** — Claude on your Mac, RAGDoll on another host (e.g. behind Caddy on Tailscale). The server must have `RAGDOLL_MCP_TRANSPORT=sse` and the proxy must route e.g. `/ragdoll` to the MCP server (port 9044). Use **`--transport sse-only`** because RAGDoll serves SSE only; mcp-remote defaults to Streamable HTTP first and would get 502. Add to Claude config:
+  ```json
+  {
+    "mcpServers": {
+      "ragdoll": {
+        "command": "npx",
+        "args": [
+          "-y",
+          "mcp-remote",
+          "https://YOUR-SERVER/ragdoll/sse",
+          "--transport",
+          "sse-only"
+        ]
+      }
+    }
+  }
+  ```
+  Replace `YOUR-SERVER` with your base URL (e.g. `https://home-server.tailce6f0c.ts.net`). Restart Claude after editing.
+
+  **If you get 502 when using remote SSE:** the client is GETting `.../ragdoll/sse`; the proxy must forward that to the MCP server so the backend receives **`/mcp/sse`** (RAGDoll mounts the SSE app at `/mcp`). On the server: (1) Confirm the MCP service is up: `sudo systemctl status ragdoll-mcp` and that `env.ragdoll` has `RAGDOLL_MCP_TRANSPORT=sse`. (2) In Caddy, route `/ragdoll` to the MCP backend (e.g. port 9044) and **rewrite the path** so `/ragdoll` becomes `/mcp` (e.g. `uri replace /ragdoll /mcp` then `reverse_proxy 127.0.0.1:9044`). (3) From the server, test: `curl -N http://127.0.0.1:9044/mcp/sse` — you should get an SSE stream (or at least not 502). If that works but the browser still gets 502, check Caddy’s rewrite and that the upstream Host header (if set) matches what the app expects.
+- **Cursor / Claude Code** — For local, use the same `command`/`env` block as above in your project’s `.mcp.json` or global MCP config. For remote, use the same `npx`/`mcp-remote`/`--transport sse-only` args.
 
 **Tools:** `list_collections` (list available collections), `query_rag` (semantic search with optional `prompt`, `history`, `threshold`, `collections`, `limit_chunk_role`, `max_results`, `synthesize`, `synthesis_mode`), `write_memory` (MCP-only: store a structured memory in the `memory` collection). When no collections are specified, `query_rag` searches all collections including `memory`; memory results include `memory_topic`, `memory_date`, and `memory_tags`. Memories use the format: Topic, Date, Tags, Conclusion, Reasoning, Open threads (each section and the full text are embedded for similarity search). When `synthesize=true`, RAGDoll uses its LLM to turn prompt+history+chunks into **instructions** or a **direct answer**. Optional resources: `ragdoll://collections`, `ragdoll://collections/{group}/sources`.
 
