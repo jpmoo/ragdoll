@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from . import config
 from .embedder import embed
 from .interpreters import CHUNK_ROLES
+from .memory import MEMORY_GROUP, parse_memory_summary
 from .storage import _connect, _list_sync_groups, clean_text, get_source_summary_by_path, init_db
 from .config import get_group_paths, _sanitize_group
 
@@ -206,19 +207,24 @@ def _run_retrieval(
     threshold: float,
     role_filter: list[str] | None,
 ) -> list[dict[str, Any]]:
-    """Run similarity retrieval over groups with optional chunk_role filter. Returns sorted results."""
+    """Run similarity retrieval over groups with optional chunk_role filter. Returns sorted results.
+    role_filter uses document CHUNK_ROLES (description, application, implication); the memory group
+    uses different roles (conclusion, reasoning, open_threads, full) so we never apply role_filter to it.
+    """
     results: list[dict[str, Any]] = []
     base_cols = "source_path, source_type, chunk_index, text, embedding, artifact_type, artifact_path, page"
     for group_name in groups:
         conn = _connect(group_name)
         try:
             init_db(conn)
-            if role_filter:
+            # Apply role filter only to non-memory groups (memory uses conclusion/reasoning/open_threads/full)
+            use_role_filter = role_filter and group_name != MEMORY_GROUP
+            if use_role_filter:
                 placeholders = ",".join("?" * len(role_filter))
                 where = f" WHERE chunk_role IN ({placeholders})"
             else:
                 where = ""
-            params: tuple = tuple(role_filter) if role_filter else ()
+            params: tuple = tuple(role_filter) if use_role_filter else ()
             try:
                 sql = f"SELECT {base_cols}, primary_question_answered, chunk_role FROM chunks{where}"
                 rows = conn.execute(sql, params).fetchall()
@@ -234,26 +240,28 @@ def _run_retrieval(
                         continue
                     source_path = row["source_path"]
                     source_name = Path(source_path).name
-                    gp = get_group_paths(group_name)
-                    try:
-                        full_source_path = Path(source_path)
-                        if full_source_path.is_absolute():
-                            try:
-                                rel_path = full_source_path.relative_to(gp.sources_dir)
-                            except ValueError:
-                                rel_path = Path(source_name)
-                        else:
-                            rel_path = Path(source_path)
-                        parts = rel_path.parts
-                        if len(parts) > 0 and parts[0] == "sources":
-                            rel_path = Path(*parts[1:])
-                        path_str = str(rel_path).replace("\\", "/")
-                        from urllib.parse import quote
-                        encoded_path = "/".join(quote(part, safe="") for part in path_str.split("/"))
-                        fetch_url = f"/fetch/{group_name}/{encoded_path}"
-                    except Exception as e:
-                        logger.warning("Could not build fetch URL for %s: %s", source_path, e)
-                        fetch_url = None
+                    fetch_url = None
+                    # Memory group has no on-disk source files; skip fetch URL to avoid 404
+                    if group_name != MEMORY_GROUP:
+                        gp = get_group_paths(group_name)
+                        try:
+                            full_source_path = Path(source_path)
+                            if full_source_path.is_absolute():
+                                try:
+                                    rel_path = full_source_path.relative_to(gp.sources_dir)
+                                except ValueError:
+                                    rel_path = Path(source_name)
+                            else:
+                                rel_path = Path(source_path)
+                            parts = rel_path.parts
+                            if len(parts) > 0 and parts[0] == "sources":
+                                rel_path = Path(*parts[1:])
+                            path_str = str(rel_path).replace("\\", "/")
+                            from urllib.parse import quote
+                            encoded_path = "/".join(quote(part, safe="") for part in path_str.split("/"))
+                            fetch_url = f"/fetch/{group_name}/{encoded_path}"
+                        except Exception as e:
+                            logger.warning("Could not build fetch URL for %s: %s", source_path, e)
                     pq = None
                     if "primary_question_answered" in row.keys():
                         pq = row["primary_question_answered"] or None
@@ -313,6 +321,14 @@ def _enrich_results_with_summary_and_context_index(
         r["source_summary"] = key_to_summary.get(k)
         r["context_index"] = key_to_index[k]
         r["context_total"] = key_to_count[k]
+    # For memory group, parse summary JSON and attach topic, date, tags to each result
+    for r in results:
+        if r.get("group") == MEMORY_GROUP and r.get("source_summary"):
+            meta = parse_memory_summary(r["source_summary"])
+            if meta:
+                r["memory_topic"] = meta.get("topic") or ""
+                r["memory_date"] = meta.get("date") or ""
+                r["memory_tags"] = meta.get("tags") or []
     return results
 
 
@@ -336,7 +352,7 @@ def _group_results_by_document(results: list[dict[str, Any]]) -> list[dict[str, 
     out: list[dict[str, Any]] = []
     for _best_sim, group_name, source_path, samples in doc_list:
         first = samples[0]
-        out.append({
+        doc_entry: dict[str, Any] = {
             "group": group_name,
             "source_path": source_path,
             "source_name": first["source_name"],
@@ -345,7 +361,12 @@ def _group_results_by_document(results: list[dict[str, Any]]) -> list[dict[str, 
             "source_summary": first.get("source_summary"),
             "samples": samples,
             "sample_count": len(samples),
-        })
+        }
+        if group_name == MEMORY_GROUP:
+            doc_entry["memory_topic"] = first.get("memory_topic", "")
+            doc_entry["memory_date"] = first.get("memory_date", "")
+            doc_entry["memory_tags"] = first.get("memory_tags", [])
+        out.append(doc_entry)
     return out
 
 

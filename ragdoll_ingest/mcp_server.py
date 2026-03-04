@@ -9,6 +9,7 @@ from fastapi import HTTPException
 
 from . import config
 from .api import _do_query
+from .memory import parse_memory_text, store_memory
 from .storage import _connect, _list_sync_groups, init_db, list_sources
 
 logger = logging.getLogger(__name__)
@@ -25,9 +26,9 @@ def _make_mcp() -> "FastMCP":
     mcp = FastMCP(
         name="ragdoll",
         instructions=(
-            "RAGDoll gives you semantic search over ingested document collections. "
-            "Use query_rag to find relevant content. Use list_collections to discover "
-            "what collections are available before querying a specific one."
+            "RAGDoll gives you semantic search over ingested document collections and a dedicated memory collection. "
+            "Use list_collections to discover collections. Use query_rag to search (when no collections are specified, the memory collection is included). "
+            "Use write_memory to store a structured memory (Topic, Date, Tags, Conclusion, Reasoning, Open threads); memories are then searchable via query_rag."
         ),
     )
 
@@ -89,6 +90,30 @@ def _make_mcp() -> "FastMCP":
             result["_total_matching"] = len(results)
 
         return result
+
+    @mcp.tool()
+    def write_memory(content: str) -> dict:
+        """Write a structured memory to the RAGDoll memory collection (MCP-only). Memories are then included in query_rag when searching all collections.
+
+        Input format (plain text with these section headers):
+        - Topic: ...
+        - Date: YYYY-MM-DD
+        - Tags: comma-separated list
+        - Conclusion: ...
+        - Reasoning: ...
+        - Open threads: ...
+
+        The memory is stored with embeddings for each section and the full text, and will appear in semantic search results with memory_topic, memory_date, and memory_tags in the result metadata.
+        """
+        parsed = parse_memory_text(content)
+        if not parsed:
+            return {"ok": False, "error": "Could not parse memory: need at least Topic or one of Conclusion/Reasoning/Open threads"}
+        try:
+            out = store_memory(parsed)
+            return out
+        except Exception as e:
+            logger.exception("write_memory failed")
+            return {"ok": False, "error": str(e)}
 
     # Optional resources (ragdoll://collections and ragdoll://collections/{group}/sources)
     @mcp.resource("ragdoll://collections")
