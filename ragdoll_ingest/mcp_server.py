@@ -91,8 +91,8 @@ def _make_mcp() -> "FastMCP":
 
         return result
 
-    @mcp.tool()
-    def write_memory(content: str) -> dict:
+    @mcp.tool(name="write_memory")
+    async def write_memory(content: str) -> dict:
         """Write a structured memory to the RAGDoll memory collection (MCP-only). Memories are then included in query_rag when searching all collections.
 
         Input format (plain text with these section headers):
@@ -109,7 +109,7 @@ def _make_mcp() -> "FastMCP":
         if not parsed:
             return {"ok": False, "error": "Could not parse memory: need at least Topic or one of Conclusion/Reasoning/Open threads"}
         try:
-            out = store_memory(parsed)
+            out = await asyncio.to_thread(store_memory, parsed)
             return out
         except Exception as e:
             logger.exception("write_memory failed")

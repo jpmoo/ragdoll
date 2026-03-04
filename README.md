@@ -355,7 +355,7 @@ sudo systemctl enable --now ragdoll-mcp
 
 **Tools:** `list_collections` (list available collections), `query_rag` (semantic search with optional `prompt`, `history`, `threshold`, `collections`, `limit_chunk_role`, `max_results`, `synthesize`, `synthesis_mode`), `write_memory` (MCP-only: store a structured memory in the `memory` collection). When no collections are specified, `query_rag` searches all collections including `memory`; memory results include `memory_topic`, `memory_date`, and `memory_tags`. Memories use the format: Topic, Date, Tags, Conclusion, Reasoning, Open threads (each section and the full text are embedded for similarity search). When `synthesize=true`, RAGDoll uses its LLM to turn prompt+history+chunks into **instructions** or a **direct answer**. Optional resources: `ragdoll://collections`, `ragdoll://collections/{group}/sources`.
 
-**All four services (ingest, API, review web, MCP)** can be installed together; copy `ragdoll-mcp.service` along with the others and enable/start as needed.
+**All four services (ingest, API, review web, MCP)** can be installed together; copy `ragdoll-mcp.service` along with the others and enable/start as needed. After updating the RAGDoll code, restart the MCP server (e.g. `sudo systemctl restart ragdoll-mcp`) and, for remote clients, restart the client so it re-fetches the tool list and sees new tools like `write_memory`.
 
 ## Review web app
 
