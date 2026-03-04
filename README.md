@@ -268,7 +268,7 @@ curl "http://localhost:9042/query?prompt=What%20is%20double-loop%20learning&grou
 Query parameters:
 - `prompt` (required): User's query/question
 - `history` (optional): Conversation history for context
-- `threshold` (optional, default: 0.45): Minimum similarity score (0.0-1.0)
+- `threshold` (optional): Minimum similarity score (0.0-1.0). Default from `RAGDOLL_QUERY_THRESHOLD` in `env.ragdoll`, or 0.45.
 - `group` (optional): Specific collection/group to query; if absent, searches all collections
 - `limit_chunk_role` (optional, default: false): If true, infer up to 2 chunk roles from prompt+context via LLM and limit retrieval to those roles
 
@@ -296,7 +296,7 @@ curl -X POST http://localhost:9042/query \
 Request body:
 - `prompt` (required): User's query/question
 - `history` (optional): Conversation history for context
-- `threshold` (optional, default: 0.45): Minimum similarity score (0.0-1.0)
+- `threshold` (optional): Minimum similarity score (0.0-1.0). Default from `RAGDOLL_QUERY_THRESHOLD` in `env.ragdoll`, or 0.45.
 - `group` (optional): Specific collection/group to query; if absent, searches all collections
 - `limit_chunk_role` (optional, default: false): If true, infer up to 2 chunk roles from prompt+context via LLM and limit retrieval to those roles
 

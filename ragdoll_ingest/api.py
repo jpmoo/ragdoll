@@ -27,7 +27,7 @@ app = FastAPI(title="RAGDoll API", version="1.0.0")
 class QueryRequest(BaseModel):
     prompt: str
     history: str | None = None
-    threshold: float = 0.45
+    threshold: float = config.QUERY_THRESHOLD
     group: list[str] | None = None  # Optional: collections to query; if None or empty, searches all
     limit_chunk_role: bool = False  # If true, use LLM to infer up to 2 roles from prompt+history and limit retrieval to those
     synthesize: bool = False  # If true, LLM synthesizes prompt+history+RAG into instructions or answer
@@ -534,7 +534,7 @@ def _do_query(
 def query_rag_get(
     prompt: str,
     history: str | None = None,
-    threshold: float = 0.45,
+    threshold: float | None = Query(None, description="Minimum similarity (0.0–1.0). Omit to use RAGDOLL_QUERY_THRESHOLD or 0.45"),
     group: list[str] | None = Query(default=None, description="Collections to query; repeat for multiple, or omit for all"),
     limit_chunk_role: bool = Query(False, description="If true, infer up to 2 chunk roles from prompt+context and limit retrieval to those"),
     synthesize: bool = Query(False, description="If true, LLM synthesizes prompt+history+RAG into instructions or answer"),
@@ -552,7 +552,8 @@ def query_rag_get(
     - synthesize: If true, RAGDoll uses its LLM to turn prompt+history+chunks into instructions or an answer (research-assistant style).
     - synthesis_mode: "instructions" or "answer".
     """
-    return _do_query(prompt, history, threshold, group, limit_chunk_role, synthesize, synthesis_mode)
+    use_threshold = threshold if threshold is not None else config.QUERY_THRESHOLD
+    return _do_query(prompt, history, use_threshold, group, limit_chunk_role, synthesize, synthesis_mode)
 
 
 @app.post("/query")

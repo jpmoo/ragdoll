@@ -101,6 +101,8 @@ CHUNK_MODEL = get_env("RAGDOLL_CHUNK_MODEL") or "llama3.2:3b"
 INTERPRET_MODEL = get_env("RAGDOLL_INTERPRET_MODEL") or CHUNK_MODEL
 # LLM for query expansion (standalone description of information need)
 QUERY_MODEL = get_env("RAGDOLL_QUERY_MODEL") or "llama3.2:3b"
+# Default minimum cosine similarity for /query and MCP query_rag (0.0–1.0). Lower = more results.
+QUERY_THRESHOLD = float(get_env("RAGDOLL_QUERY_THRESHOLD") or "0.45")
 
 # API server
 API_PORT = int(get_env("RAGDOLL_API_PORT") or "9042")

@@ -43,7 +43,7 @@ def _make_mcp() -> "FastMCP":
     async def query_rag(
         prompt: str,
         history: str | None = None,
-        threshold: float = 0.45,
+        threshold: float | None = None,
         collections: list[str] | None = None,
         limit_chunk_role: bool = False,
         max_results: int = 20,
@@ -56,7 +56,7 @@ def _make_mcp() -> "FastMCP":
         Args:
             prompt: Your question or information need.
             history: Optional prior conversation turns as plain text, used for query expansion.
-            threshold: Minimum cosine similarity (0.0–1.0). Lower = more results, less precise. Default 0.45.
+            threshold: Minimum cosine similarity (0.0–1.0). Lower = more results, less precise. Omit to use RAGDOLL_QUERY_THRESHOLD (default 0.45).
             collections: Collection names to search. If omitted or empty, searches all collections.
             limit_chunk_role: When true, infer up to 2 chunk roles from the prompt and restrict retrieval to those roles.
             max_results: Maximum number of chunks to return in the flat results list. Default 20. Does not cap the grouped documents view.
@@ -64,11 +64,12 @@ def _make_mcp() -> "FastMCP":
             synthesis_mode: "instructions" (default) = instructions for the caller to use; "answer" = direct summary/answer.
         """
         try:
+            use_threshold = config.QUERY_THRESHOLD if threshold is None else threshold
             result = await asyncio.to_thread(
                 _do_query,
                 prompt,
                 history,
-                threshold,
+                use_threshold,
                 collections if collections else None,
                 limit_chunk_role,
                 synthesize,
