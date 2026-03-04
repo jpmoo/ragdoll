@@ -29,6 +29,8 @@ class QueryRequest(BaseModel):
     threshold: float = 0.45
     group: list[str] | None = None  # Optional: collections to query; if None or empty, searches all
     limit_chunk_role: bool = False  # If true, use LLM to infer up to 2 roles from prompt+history and limit retrieval to those
+    synthesize: bool = False  # If true, LLM synthesizes prompt+history+RAG into instructions or answer
+    synthesis_mode: str = "instructions"  # "instructions" (for an assistant) or "answer" (direct summary)
 
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
@@ -347,12 +349,78 @@ def _group_results_by_document(results: list[dict[str, Any]]) -> list[dict[str, 
     return out
 
 
+# Max chunks to send to the synthesis LLM (to stay within context limits)
+SYNTHESIS_MAX_CHUNKS = 15
+
+
+def _synthesize_rag_results(
+    prompt: str,
+    history: str | None,
+    results: list[dict[str, Any]],
+    mode: str = "instructions",
+) -> str:
+    """Use the same LLM as query expansion to synthesize prompt + history + RAG chunks into a response.
+    
+    mode: "instructions" = produce instructions for an assistant (incorporating RAG context); "answer" = produce a direct answer/summary.
+    """
+    if not results:
+        return "No retrieved passages to synthesize."
+    model = config.QUERY_MODEL
+    url = (config.OLLAMA_HOST or "").rstrip("/")
+    chunks = results[:SYNTHESIS_MAX_CHUNKS]
+    context_parts = []
+    for i, r in enumerate(chunks, 1):
+        name = r.get("source_name") or r.get("source_path") or "unknown"
+        text = (r.get("text") or "").strip()
+        if text:
+            context_parts.append(f"[{i}] Source: {name}\n{text}")
+    context_text = "\n\n".join(context_parts)
+    if history:
+        user_block = f"Conversation history:\n{history}\n\nUser question: {prompt}"
+    else:
+        user_block = f"User question: {prompt}"
+    if mode == "answer":
+        prompt_text = (
+            "Given the user's question and the following retrieved passages from a RAG system, write a concise answer. "
+            "Use only information from the passages. Do not invent or add external facts.\n\n"
+            f"{user_block}\n\n"
+            "Retrieved passages:\n"
+            f"{context_text}\n\n"
+            "Concise answer:"
+        )
+    else:
+        prompt_text = (
+            "You are preparing context for an assistant that will answer the user. "
+            "Given the user's question, optional conversation history, and the following retrieved passages, "
+            "write clear instructions for the assistant. The instructions should summarize the relevant facts from the passages "
+            "so the assistant can answer accurately. Do not invent information not in the passages.\n\n"
+            f"{user_block}\n\n"
+            "Retrieved passages:\n"
+            f"{context_text}\n\n"
+            "Instructions for the assistant:"
+        )
+    try:
+        r = requests.post(
+            f"{url}/api/generate",
+            json={"model": model, "prompt": prompt_text, "stream": False},
+            timeout=config.CHUNK_LLM_TIMEOUT,
+        )
+        r.raise_for_status()
+        response = r.json().get("response", "").strip()
+        return response or "(Synthesis produced no text.)"
+    except Exception as e:
+        logger.warning("Synthesis failed: %s", e)
+        return f"(Synthesis failed: {e})"
+
+
 def _do_query(
     prompt: str,
     history: str | None,
     threshold: float,
     group: list[str] | None = None,
     limit_chunk_role: bool = False,
+    synthesize: bool = False,
+    synthesis_mode: str = "instructions",
 ) -> dict[str, Any]:
     """Shared query logic for GET and POST endpoints.
     
@@ -363,6 +431,8 @@ def _do_query(
         group: Optional list of collections to query; if None or empty, searches all collections.
                Results from all specified collections are merged and ranked by similarity only.
         limit_chunk_role: If true, infer up to 2 chunk roles from prompt+history via LLM and limit retrieval to those.
+        synthesize: If true, call LLM to synthesize prompt + history + top chunks into instructions or an answer.
+        synthesis_mode: "instructions" (for an assistant) or "answer" (direct summary).
     """
     # Optionally infer chunk roles from user input (prompt + context); uses current CHUNK_ROLES (description, application, implication)
     role_filter: list[str] | None = None
@@ -430,6 +500,12 @@ def _do_query(
     elif role_filter is not None:
         out["limit_chunk_role"] = True
         out["inferred_roles"] = role_filter
+
+    if synthesize and all_results:
+        synthesis_text = _synthesize_rag_results(prompt, history, all_results, mode=synthesis_mode)
+        out["synthesis"] = synthesis_text
+        out["synthesis_mode"] = synthesis_mode
+
     return out
 
 
@@ -440,6 +516,8 @@ def query_rag_get(
     threshold: float = 0.45,
     group: list[str] | None = Query(default=None, description="Collections to query; repeat for multiple, or omit for all"),
     limit_chunk_role: bool = Query(False, description="If true, infer up to 2 chunk roles from prompt+context and limit retrieval to those"),
+    synthesize: bool = Query(False, description="If true, LLM synthesizes prompt+history+RAG into instructions or answer"),
+    synthesis_mode: str = Query("instructions", description="When synthesize=true: 'instructions' (for an assistant) or 'answer'"),
 ) -> dict[str, Any]:
     """Query RAG collections via GET (simple URL format).
     
@@ -450,8 +528,10 @@ def query_rag_get(
     - group: Optional list of collections (e.g. ?group=a&group=b); if absent, searches all.
              Results are merged and ranked by similarity; each result includes a "group" field.
     - limit_chunk_role: If true, use LLM to infer chunk roles from prompt+context and limit retrieval; false if absent.
+    - synthesize: If true, RAGDoll uses its LLM to turn prompt+history+chunks into instructions or an answer (research-assistant style).
+    - synthesis_mode: "instructions" or "answer".
     """
-    return _do_query(prompt, history, threshold, group, limit_chunk_role)
+    return _do_query(prompt, history, threshold, group, limit_chunk_role, synthesize, synthesis_mode)
 
 
 @app.post("/query")
@@ -466,8 +546,13 @@ def query_rag(request: QueryRequest) -> dict[str, Any]:
              Results from all specified collections are merged into one list and ranked by similarity;
              each result includes a "group" field indicating its collection.
     - limit_chunk_role: If true, use LLM to infer up to 2 chunk roles from prompt+context and limit retrieval; false if absent.
+    - synthesize: If true, LLM synthesizes prompt+history+RAG into instructions or answer.
+    - synthesis_mode: "instructions" or "answer".
     """
-    return _do_query(request.prompt, request.history, request.threshold, request.group, request.limit_chunk_role)
+    return _do_query(
+        request.prompt, request.history, request.threshold, request.group,
+        request.limit_chunk_role, request.synthesize, request.synthesis_mode,
+    )
 
 
 if __name__ == "__main__":

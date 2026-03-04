@@ -353,7 +353,7 @@ sudo systemctl enable --now ragdoll-mcp
   ```
 - **Cursor / Claude Code** — Add the same block to your project’s `.mcp.json` or global MCP config.
 
-**Tools:** `list_collections` (list available collections), `query_rag` (semantic search with optional `prompt`, `history`, `threshold`, `collections`, `limit_chunk_role`, `max_results`). Optional resources: `ragdoll://collections`, `ragdoll://collections/{group}/sources`.
+**Tools:** `list_collections` (list available collections), `query_rag` (semantic search with optional `prompt`, `history`, `threshold`, `collections`, `limit_chunk_role`, `max_results`, `synthesize`, `synthesis_mode`). When `synthesize=true`, RAGDoll uses its LLM (same as query expansion) to turn prompt+history+retrieved chunks into **instructions for the caller** (`synthesis_mode=instructions`) or a **direct answer** (`synthesis_mode=answer`), so the MCP tool can act as a research assistant. Optional resources: `ragdoll://collections`, `ragdoll://collections/{group}/sources`.
 
 **All four services (ingest, API, review web, MCP)** can be installed together; copy `ragdoll-mcp.service` along with the others and enable/start as needed.
 

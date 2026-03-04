@@ -139,6 +139,8 @@ curl "http://localhost:9042/query?prompt=What%20is%20double-loop%20learning&grou
 - `threshold` (optional, default: 0.45): Minimum similarity score (0.0-1.0). Lower = more results, higher = more precise
 - `group` (optional): Specific collection name. If absent, searches all collections
 - `limit_chunk_role` (optional, default: false): If true, the server runs your prompt and context through an LLM to infer up to two chunk roles (from the same roles used at ingest), then limits retrieval to chunks matching those roles. If false or absent, retrieval is not limited by role.
+- `synthesize` (optional, default: false): If true, after retrieval the server uses the same LLM (query model) to turn prompt+history+top chunks into **instructions for an assistant** or a **direct answer**, so the API can act as a research assistant. The response includes a `synthesis` field.
+- `synthesis_mode` (optional, default: "instructions"): When `synthesize=true`, use `"instructions"` (summarize context into instructions for the caller) or `"answer"` (produce a direct answer from the passages).
 
 **Python example:**
 ```python
@@ -187,7 +189,9 @@ payload = {
     "history": "Previous conversation context...",  # Optional
     "threshold": 0.45,  # Optional, default 0.45
     "group": "edleadership",  # Optional, searches all if absent
-    "limit_chunk_role": False  # Optional; if True, infer roles from prompt+context and limit retrieval
+    "limit_chunk_role": False,  # Optional; if True, infer roles from prompt+context and limit retrieval
+    "synthesize": False,        # Optional; if True, LLM produces instructions or answer from RAG context
+    "synthesis_mode": "instructions"  # "instructions" or "answer" when synthesize=True
 }
 
 response = requests.post("http://localhost:9042/query", json=payload)
@@ -207,6 +211,8 @@ curl -X POST http://localhost:9042/query \
 ```
 
 When `limit_chunk_role` is true, the server sends your prompt and any `history` to the same LLM used for query expansion, which picks up to two chunk roles (e.g. `description`, `application`, `implication`) from the ingest role list. Retrieval is then limited to chunks with those roles. If the LLM returns no valid roles, retrieval is not limited. The response may include `limit_chunk_role: true` and `inferred_roles: ["role1", "role2"]` when role filtering was applied.
+
+**Synthesis (research-assistant style):** When `synthesize` is true, after retrieval the server calls the same query LLM with the top chunks (up to 15) and asks it to produce either **instructions** for the caller (so the caller can answer using that context) or a **direct answer**. The response includes `synthesis` (the LLM text) and `synthesis_mode`. This makes RAGDoll act as a thinking/synthesis layer: the client receives both the raw RAG results and a digested version.
 
 ---
 
@@ -313,6 +319,10 @@ Each result in the `results` array contains:
 When `limit_chunk_role` was true and role filtering was applied, the response also includes:
 - **`limit_chunk_role`**: `true`
 - **`inferred_roles`**: Array of the one or two roles inferred from the user input (e.g. `["description", "application"]`)
+
+When `synthesize` was true, the response also includes:
+- **`synthesis`**: The LLM-produced text (instructions for the caller or a direct answer, depending on `synthesis_mode`)
+- **`synthesis_mode`**: `"instructions"` or `"answer"`
 
 If no chunks matched the inferred roles (e.g. most chunks have no role set), the server falls back to unfiltered retrieval and adds **`role_filter_relaxed`**: `true` and **`inferred_roles`** so you still get results and know the filter was relaxed.
 

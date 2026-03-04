@@ -46,8 +46,11 @@ def _make_mcp() -> "FastMCP":
         collections: list[str] | None = None,
         limit_chunk_role: bool = False,
         max_results: int = 20,
+        synthesize: bool = False,
+        synthesis_mode: str = "instructions",
     ) -> dict:
         """Semantic similarity search over one or more RAGDoll document collections. Returns matching document chunks sorted by relevance.
+        When synthesize=true, RAGDoll also uses its LLM to turn prompt+history+chunks into instructions or an answer (research-assistant style).
 
         Args:
             prompt: Your question or information need.
@@ -56,6 +59,8 @@ def _make_mcp() -> "FastMCP":
             collections: Collection names to search. If omitted or empty, searches all collections.
             limit_chunk_role: When true, infer up to 2 chunk roles from the prompt and restrict retrieval to those roles.
             max_results: Maximum number of chunks to return in the flat results list. Default 20. Does not cap the grouped documents view.
+            synthesize: When true, LLM synthesizes prompt+history+RAG into instructions for an assistant or a direct answer.
+            synthesis_mode: "instructions" (default) = instructions for the caller to use; "answer" = direct summary/answer.
         """
         try:
             result = await asyncio.to_thread(
@@ -65,6 +70,8 @@ def _make_mcp() -> "FastMCP":
                 threshold,
                 collections if collections else None,
                 limit_chunk_role,
+                synthesize,
+                synthesis_mode,
             )
         except HTTPException as e:
             raise ValueError(f"{e.detail}") from e
