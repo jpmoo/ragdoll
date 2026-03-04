@@ -91,7 +91,6 @@ def _make_mcp() -> "FastMCP":
 
         return result
 
-    @mcp.tool(name="write_memory")
     async def write_memory(content: str) -> dict:
         """Write a structured memory to the RAGDoll memory collection (MCP-only). Memories are then included in query_rag when searching all collections.
 
@@ -114,6 +113,9 @@ def _make_mcp() -> "FastMCP":
         except Exception as e:
             logger.exception("write_memory failed")
             return {"ok": False, "error": str(e)}
+
+    # Register write_memory in the MCP tool manifest (must be callable so clients see it in tools/list)
+    mcp.tool()(write_memory)
 
     # Optional resources (ragdoll://collections and ragdoll://collections/{group}/sources)
     @mcp.resource("ragdoll://collections")
