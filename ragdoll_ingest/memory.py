@@ -60,7 +60,7 @@ def parse_memory_text(raw: str) -> dict[str, Any] | None:
         "full_text": text,
     }
     for pattern, key, single_line in patterns:
-        m = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
+        m = re.search(pattern, text, re.IGNORECASE | re.DOTALL | re.MULTILINE)
         if m:
             val = m.group(1).strip()
             if single_line:
