@@ -6,9 +6,12 @@ This guide explains how to integrate your chatbot or application with RAGDoll's 
 
 RAGDoll provides an HTTP API server (default port `9042`) that enables:
 - **Semantic search** across ingested documents using natural language queries
-- **Collection management** to discover available document collections
+- **Collection management** to discover available document collections (including the optional **`memory`** collection when it exists; memories are written via MCP `write_memory`, not the HTTP API)
 - **Query expansion** via LLM to improve search accuracy
-- **Flexible querying** across all collections or specific ones
+- **Flexible querying** across all collections or specific ones (repeat `group` on GET, or JSON array on POST)
+- **Optional synthesis** (`synthesize`) and **role-limited retrieval** (`limit_chunk_role`); see §3
+
+**Server-side default similarity threshold:** Set **`RAGDOLL_QUERY_THRESHOLD`** in `env.ragdoll` (default `0.45` if unset). Used when a request omits `threshold` (GET) or when POST JSON omits `threshold` (POST body default).
 
 ## Base URL
 
@@ -128,16 +131,26 @@ Best for simple queries without conversation history.
 curl "http://localhost:9042/query?prompt=What%20is%20double-loop%20learning&threshold=0.45"
 ```
 
+**Query all collections using server default threshold** (omit `threshold`; uses `RAGDOLL_QUERY_THRESHOLD` from `env.ragdoll`, or `0.45`):
+```bash
+curl "http://localhost:9042/query?prompt=What%20is%20double-loop%20learning"
+```
+
 **Query specific collection:**
 ```bash
 curl "http://localhost:9042/query?prompt=What%20is%20double-loop%20learning&group=edleadership&threshold=0.45"
 ```
 
+**Query multiple collections** (repeat `group`):
+```bash
+curl "http://localhost:9042/query?prompt=...&group=edleadership&group=memory"
+```
+
 **Parameters:**
 - `prompt` (required): Your natural language query/question
 - `history` (optional): Previous conversation context for better query expansion
-- `threshold` (optional, default: 0.45): Minimum similarity score (0.0-1.0). Lower = more results, higher = more precise
-- `group` (optional): Specific collection name. If absent, searches all collections
+- `threshold` (optional): Minimum similarity score (0.0–1.0). Lower = more results, higher = more precise. **If omitted**, the server uses **`RAGDOLL_QUERY_THRESHOLD`** from environment / `env.ragdoll`, or **`0.45`**.
+- `group` (optional): One or more collection names; repeat the query parameter (`?group=a&group=b`). If absent, searches **all** collections (including `memory` when that collection exists)
 - `limit_chunk_role` (optional, default: false): If true, the server runs your prompt and context through an LLM to infer up to two chunk roles (from the same roles used at ingest), then limits retrieval to chunks matching those roles. If false or absent, retrieval is not limited by role.
 - `synthesize` (optional, default: false): If true, after retrieval the server uses the same LLM (query model) to turn prompt+history+top chunks into **instructions for an assistant** or a **direct answer**, so the API can act as a research assistant. The response includes a `synthesis` field.
 - `synthesis_mode` (optional, default: "instructions"): When `synthesize=true`, use `"instructions"` (summarize context into instructions for the caller) or `"answer"` (produce a direct answer from the passages).
@@ -148,6 +161,7 @@ import requests
 from urllib.parse import quote
 
 prompt = "What is double-loop learning?"
+# Omit &threshold=... to use RAGDOLL_QUERY_THRESHOLD on the server
 url = f"http://localhost:9042/query?prompt={quote(prompt)}&threshold=0.45"
 
 response = requests.get(url)
@@ -175,7 +189,7 @@ curl -X POST http://localhost:9042/query \
   -d '{
     "prompt": "Tell me more about that",
     "history": "User: What is double-loop learning?\nAssistant: Double-loop learning is...",
-    "group": "edleadership",
+    "group": ["edleadership"],
     "threshold": 0.45
   }'
 ```
@@ -187,8 +201,8 @@ import requests
 payload = {
     "prompt": "What is double-loop learning?",
     "history": "Previous conversation context...",  # Optional
-    "threshold": 0.45,  # Optional, default 0.45
-    "group": "edleadership",  # Optional, searches all if absent
+    "threshold": 0.45,  # Optional; default from RAGDOLL_QUERY_THRESHOLD or 0.45
+    "group": ["edleadership"],  # Optional: one or more collections; omit or [] to search all
     "limit_chunk_role": False,  # Optional; if True, infer roles from prompt+context and limit retrieval
     "synthesize": False,        # Optional; if True, LLM produces instructions or answer from RAG context
     "synthesis_mode": "instructions"  # "instructions" or "answer" when synthesize=True
@@ -285,7 +299,7 @@ Results are returned in two forms:
 
 - **`query`**: Your original prompt
 - **`expanded_query`**: LLM-expanded standalone description (used for embedding)
-- **`threshold`**: Similarity threshold that was applied
+- **`threshold`**: Similarity threshold that was applied (reflects the request value or server default from `RAGDOLL_QUERY_THRESHOLD`)
 - **`count`**: Total number of chunks returned
 - **`documents`**: Array of document blocks. Each block has: **`group`**, **`source_path`**, **`source_name`**, **`source_url`**, **`source_type`**, **`source_summary`** (document summary or null), **`sample_count`**, **`samples`** (array of chunks from that document with **`context_index`** (1 of X), **`context_total`** (X), **`text`**, **`similarity`**, etc.). Documents are ordered by best similarity in that document.
 - **`results`**: Flat array of all chunks, sorted by similarity (for backward compatibility)
@@ -311,8 +325,10 @@ Each result in the `results` array contains:
   - `"figure_summary"`: LLM summary of a figure/diagram
 - **`artifact_path`**: Path to stored artifact (image/JSON) if applicable, `null` for text
 - **`page`**: Page number (for PDFs), `null` for non-paginated documents
-- **`chunk_role`**: Role assigned during ingest (e.g. `description`, `application`, `implication`), or `null` if none
+- **`chunk_role`**: For document chunks: role from ingest (e.g. `description`, `application`, `implication`), or `null`. For **memory** chunks: `conclusion`, `reasoning`, `open_threads`, or `full`.
 - **`similarity`**: Cosine similarity score (0.0-1.0), higher = more relevant
+- **`memory_topic`**, **`memory_date`**, **`memory_tags`**: Present when **`group`** is **`memory`** (and summary JSON parses); empty string / `[]` if missing
+- **`primary_question_answered`**: May be set on document chunks from ingest; typically unused for memory
 
 **Presenting results:** Prefer the **`documents`** array for a document-first UX. For each document, show its summary and metadata, then list its samples with labels like *"Sample 1 of 3"*, *"Sample 2 of 3"* using each sample’s `context_index` and `context_total`. Documents are ordered by relevance (best similarity in that document). If you use the flat **`results`** list instead, group by `(group, source_path)` and use `source_summary`, `context_index`, and `context_total` on each result for the same labels.
 
@@ -326,6 +342,17 @@ When `synthesize` was true, the response also includes:
 
 If no chunks matched the inferred roles (e.g. most chunks have no role set), the server falls back to unfiltered retrieval and adds **`role_filter_relaxed`**: `true` and **`inferred_roles`** so you still get results and know the filter was relaxed.
 
+### Memory collection (`group` = `memory`)
+
+When the **`memory`** collection exists (created after at least one MCP `write_memory` call), it is included in **search-all** queries the same as document collections. You can also target it with `group=memory` (GET) or `"group": ["memory"]` (POST).
+
+- **Result metadata:** Each hit from `memory` may include **`memory_topic`**, **`memory_date`**, and **`memory_tags`** (parsed from the stored memory). Document-level entries in **`documents`** may include the same fields on the block.
+- **`chunk_role`:** For memory chunks, values are **`conclusion`**, **`reasoning`**, **`open_threads`**, or **`full`** (not the document ingest roles `description` / `application` / `implication`).
+- **`source_url`:** Usually **`null`** for memory (there is no file to fetch).
+- **`limit_chunk_role`:** Role filtering applies only to **document** collections; the **`memory`** group is always searched without that filter so memories are not excluded.
+
+**Writing memories** is **not** available on the HTTP API; use the MCP tool **`write_memory`**.
+
 ---
 
 ## 5. Integration Patterns for Chatbots
@@ -335,15 +362,14 @@ If no chunks matched the inferred roles (e.g. most chunks have no role set), the
 ```python
 import requests
 
-def query_ragdoll(prompt: str, collection: str = None, threshold: float = 0.45):
-    """Query RAGDoll and return top results."""
+def query_ragdoll(prompt: str, collection: str = None, threshold: float | None = None):
+    """Query RAGDoll and return top results. Omit threshold to use server default (RAGDOLL_QUERY_THRESHOLD)."""
     url = "http://localhost:9042/query"
-    payload = {
-        "prompt": prompt,
-        "threshold": threshold
-    }
+    payload = {"prompt": prompt}
+    if threshold is not None:
+        payload["threshold"] = threshold
     if collection:
-        payload["group"] = collection
+        payload["group"] = [collection]
     
     response = requests.post(url, json=payload)
     if response.status_code == 200:
@@ -370,10 +396,10 @@ def query_with_history(prompt: str, conversation_history: str, collection: str =
     payload = {
         "prompt": prompt,
         "history": conversation_history,
-        "threshold": 0.45
+        "threshold": 0.45,
     }
     if collection:
-        payload["group"] = collection
+        payload["group"] = [collection]
     
     response = requests.post(url, json=payload)
     return response.json()["results"]
@@ -427,7 +453,7 @@ def adaptive_search(prompt: str, collection: str = None, min_results: int = 3):
         url = "http://localhost:9042/query"
         payload = {"prompt": prompt, "threshold": threshold}
         if collection:
-            payload["group"] = collection
+            payload["group"] = [collection]
         
         response = requests.post(url, json=payload)
         data = response.json()
@@ -482,7 +508,7 @@ def safe_query_ragdoll(
         "threshold": threshold
     }
     if collection:
-        payload["group"] = collection
+        payload["group"] = [collection]
     if history:
         payload["history"] = history
     
@@ -661,16 +687,15 @@ class RAGDollClient:
         self,
         prompt: str,
         collection: Optional[str] = None,
-        threshold: float = 0.45,
+        threshold: Optional[float] = None,
         history: Optional[str] = None
     ) -> Dict:
-        """Query RAGDoll."""
-        payload = {
-            "prompt": prompt,
-            "threshold": threshold
-        }
+        """Query RAGDoll. Omit threshold to use server default (RAGDOLL_QUERY_THRESHOLD)."""
+        payload: Dict = {"prompt": prompt}
+        if threshold is not None:
+            payload["threshold"] = threshold
         if collection:
-            payload["group"] = collection
+            payload["group"] = [collection]  # API expects a list of collection names
         if history:
             payload["history"] = history
         
@@ -726,7 +751,7 @@ print(response_text)
 
 ### No Results Returned
 
-1. **Lower the threshold**: Try `0.35` or `0.3`
+1. **Lower the threshold**: Try `0.35` or `0.3` in the request, or set **`RAGDOLL_QUERY_THRESHOLD`** lower in `env.ragdoll` for the default
 2. **Check collection name**: Verify with `GET /rags`
 3. **Broaden query**: Make the prompt more general
 4. **Check if collection has data**: Verify the collection's database exists and has chunks
@@ -748,6 +773,16 @@ print(response_text)
 
 ## 10. Quick Reference
 
+### Environment variables (see `env.ragdoll.example`)
+
+| Variable | Role for the HTTP API |
+|----------|------------------------|
+| `RAGDOLL_API_PORT` | API listen port (default `9042`) |
+| `RAGDOLL_QUERY_THRESHOLD` | Default minimum similarity when a request omits `threshold` |
+| `RAGDOLL_ENV` | Path to `env.ragdoll` if not at project root |
+
+Other paths (`RAGDOLL_INGEST_PATH`, `RAGDOLL_OUTPUT_PATH`, Ollama host/model, etc.) affect ingest and query behavior; see the example env file and main README.
+
 ### Endpoints
 
 | Endpoint | Method | Purpose |
@@ -757,26 +792,33 @@ print(response_text)
 | `/query` | GET | Query (URL parameters) |
 | `/query` | POST | Query (JSON body) |
 
-### Query Parameters
+### Query parameters (GET and POST body)
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `prompt` | string | Yes | - | Natural language query |
-| `history` | string | No | null | Conversation context |
-| `threshold` | float | No | 0.45 | Similarity threshold (0.0-1.0) |
-| `group` | string | No | null | Specific collection (searches all if absent) |
+| `history` | string | No | null | Conversation context for query expansion |
+| `threshold` | float | No | `RAGDOLL_QUERY_THRESHOLD` or `0.45` | Minimum cosine similarity (0.0–1.0). Omit on GET to use server default. |
+| `group` | string[] | No | null | One or more collections. GET: repeat `?group=a&group=b`. POST: JSON array, e.g. `["edleadership"]` or `["a","memory"]`. Omit to search all (including `memory` if present). |
+| `limit_chunk_role` | boolean | No | false | Infer ingest chunk roles and filter document chunks; **memory** group is never filtered this way. |
+| `synthesize` | boolean | No | false | If true, LLM produces `synthesis` from top chunks. |
+| `synthesis_mode` | string | No | `"instructions"` | With `synthesize`: `"instructions"` or `"answer"`. |
 
-### Result Fields
+### Result fields (per chunk in `results` / samples in `documents`)
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `text` | string | Chunk text content |
-| `similarity` | float | Relevance score (0.0-1.0) |
-| `source_name` | string | Source document filename |
-| `source_url` | string | URL to fetch source document (`/fetch/{group}/{filename}`) |
-| `group` | string | Collection name |
-| `page` | int/null | Page number (PDFs) |
-| `artifact_type` | string | Content type (text/chart_summary/table_summary/figure_summary) |
+| `similarity` | float | Relevance score (0.0–1.0) |
+| `source_name` | string | Source filename or memory pseudo-path segment |
+| `source_url` | string / null | `/fetch/...` for files; **null** for memory |
+| `group` | string | Collection name (`memory` for memories) |
+| `page` | int / null | Page number (PDFs); often null for memory |
+| `artifact_type` | string | Content type (e.g. `text`, chart/table/figure summaries) |
+| `chunk_role` | string / null | Document: `description` / `application` / `implication`. Memory: `conclusion` / `reasoning` / `open_threads` / `full`. |
+| `memory_topic` | string | Memory collection only (when set) |
+| `memory_date` | string | Memory collection only (when set) |
+| `memory_tags` | array | Memory collection only (when set) |
 
 ---
 
