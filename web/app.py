@@ -1,8 +1,12 @@
 """Review web service: side-by-side source and samples (chunks), port 9043."""
 
 import base64
+import csv
+import io
 import logging
+import re
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, Response
@@ -26,6 +30,7 @@ from ragdoll_ingest.storage import (
     get_source_summary,
     init_db,
     insert_chunk_at,
+    fetch_chunks_for_csv_export,
     list_sources,
     reindex_chunks_after_delete,
     set_source_summary,
@@ -38,6 +43,61 @@ logger = logging.getLogger(__name__)
 
 REVIEW_PORT = 9043
 WEB_ROOT = Path(__file__).resolve().parent
+
+# Claude / web-ingest handoff: one row per chunk, source metadata repeated.
+EXPORT_CHUNK_CSV_HEADERS = [
+    "source_key",
+    "canonical_url",
+    "source_title",
+    "fetched_at",
+    "source_type",
+    "source_path",
+    "doc_summary",
+    "chunk_index",
+    "text",
+    "page",
+    "chunk_role",
+    "primary_question_answered",
+    "key_signals",
+    "artifact_type",
+    "artifact_path",
+    "concept",
+    "decision_context",
+]
+
+
+def _chunk_export_row_to_csv_values(row: dict[str, Any]) -> list[Any]:
+    source_path = row.get("source_path") or ""
+    title = Path(source_path).name if source_path else ""
+    page = row.get("page")
+    page_out: Any = "" if page is None else page
+    ks = row.get("key_signals")
+    if ks is None or ks == "":
+        ks_out = ""
+    else:
+        ks_out = ks if isinstance(ks, str) else str(ks)
+    return [
+        str(row["source_id"]),
+        (row.get("canonical_url") or "").strip(),
+        title,
+        row.get("source_created_at") or "",
+        row.get("source_type") or "",
+        source_path,
+        (row.get("doc_summary") or "").strip() if row.get("doc_summary") else "",
+        row["chunk_index"],
+        row.get("text") or "",
+        page_out,
+        (row.get("chunk_role") or "").strip() if row.get("chunk_role") else "",
+        (row.get("primary_question_answered") or "").strip()
+        if row.get("primary_question_answered")
+        else "",
+        ks_out,
+        row.get("artifact_type") or "text",
+        row.get("artifact_path") or "",
+        (row.get("concept") or "").strip() if row.get("concept") else "",
+        (row.get("decision_context") or "").strip() if row.get("decision_context") else "",
+    ]
+
 
 # Optional HTTP Basic Auth: set both to enable
 REVIEW_USER = get_env("RAGDOLL_REVIEW_USER") or ""
@@ -143,6 +203,32 @@ def api_list_sources(group: str):
         return {"sources": out}
     finally:
         conn.close()
+
+
+@app.get("/api/groups/{group}/export/chunks.csv")
+def api_export_chunks_csv(group: str):
+    """Download all chunks in the collection as CSV (Claude / web-ingest handoff example)."""
+    safe_group = config._sanitize_group(group)
+    conn = _connect(safe_group)
+    try:
+        init_db(conn)
+        rows = fetch_chunks_for_csv_export(conn)
+    finally:
+        conn.close()
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(EXPORT_CHUNK_CSV_HEADERS)
+    for row in rows:
+        writer.writerow(_chunk_export_row_to_csv_values(row))
+    fname = re.sub(r"[^\w.\-]+", "_", safe_group).strip("_") or "collection"
+    body = buf.getvalue().encode("utf-8")
+    return Response(
+        content=body,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="ragdoll-{fname}-chunks-export.csv"'
+        },
+    )
 
 
 @app.get("/api/groups/{group}/sources/{source_id}/chunks")

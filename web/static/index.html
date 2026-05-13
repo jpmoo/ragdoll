@@ -63,6 +63,16 @@
       border: none;
     }
     header button:hover { background: var(--accent-hover); }
+    header button.btn-secondary {
+      background: var(--bg);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    header button.btn-secondary:hover { background: var(--border); }
+    header button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
     .panel {
       display: flex;
       flex-direction: column;
@@ -352,6 +362,7 @@
       <select id="sourceSelect" aria-label="Source" disabled>
         <option value="">Select source…</option>
       </select>
+      <button type="button" id="exportCsvBtn" class="btn-secondary" disabled title="Download all chunks in this collection as CSV">Export CSV</button>
       <a id="openSource" href="#" target="_blank" rel="noopener" style="color: var(--accent); font-size: 0.9rem;">Open in new tab</a>
     </header>
 
@@ -504,6 +515,12 @@
       state.source = null;
       if (state.group) loadSources();
       else { renderSource(); renderChunks(); }
+      syncExportCsvButton();
+    }
+
+    function syncExportCsvButton() {
+      const btn = qs('#exportCsvBtn');
+      if (btn) btn.disabled = !state.group;
     }
 
     function onSourceChange() {
@@ -873,6 +890,17 @@
 
     qs('#groupSelect').addEventListener('change', onGroupChange);
     qs('#sourceSelect').addEventListener('change', onSourceChange);
+    qs('#exportCsvBtn').addEventListener('click', function() {
+      if (!state.group) return;
+      const url = API + '/groups/' + encodeURIComponent(state.group) + '/export/chunks.csv';
+      const a = document.createElement('a');
+      a.href = url;
+      a.setAttribute('download', '');
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      toast('Export started.');
+    });
     qsAll('input[name="filter"]').forEach(el => el.addEventListener('change', function() {
       if (this.value === 'page' && state.pdfDoc) {
         qs('#pageNum').value = state.currentPdfPage;
@@ -948,6 +976,7 @@
     qs('#addAtBottom').addEventListener('click', () => openAddSampleModal({ type: 'bottom' }));
 
     loadGroups();
+    syncExportCsvButton();
   </script>
 </body>
 </html>

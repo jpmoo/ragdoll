@@ -7,6 +7,7 @@ import shutil
 import sqlite3
 import threading
 from pathlib import Path
+from typing import Any
 
 from . import config
 from .action_log import log as action_log
@@ -318,6 +319,11 @@ def init_db(conn: sqlite3.Connection) -> None:
     except sqlite3.OperationalError as e:
         if "duplicate" not in str(e).lower():
             raise
+    try:
+        conn.execute("ALTER TABLE sources ADD COLUMN external_url TEXT")
+    except sqlite3.OperationalError as e:
+        if "duplicate" not in str(e).lower():
+            raise
 
     # Check if chunks table exists
     table_exists = conn.execute(
@@ -595,6 +601,27 @@ def list_sources(conn: sqlite3.Connection) -> list[tuple[int, str, int, str | No
         ]
     
     return []
+
+
+def fetch_chunks_for_csv_export(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """All chunks in the collection with source metadata, ordered by source id then chunk_index.
+
+    Intended for Claude / web-ingest style CSV examples: source_key, URLs, paths, and chunk fields.
+    """
+    init_db(conn)
+    _migrate_sources_table(conn)
+    rows = conn.execute(
+        """
+        SELECT s.id AS source_id, s.source_path, s.source_type, s.created_at AS source_created_at,
+               s.summary AS doc_summary, s.external_url AS canonical_url,
+               c.chunk_index, c.text, c.page, c.chunk_role, c.primary_question_answered, c.key_signals,
+               c.artifact_type, c.artifact_path, c.concept, c.decision_context
+        FROM chunks c
+        JOIN sources s ON s.id = c.source_id
+        ORDER BY s.id, c.chunk_index
+        """
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def get_chunks_for_source(
