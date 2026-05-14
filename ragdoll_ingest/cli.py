@@ -1,20 +1,248 @@
 """CLI tool for managing RAGDoll collections and sources."""
 
 import argparse
+import csv
+import json
 import shutil
 import sys
+from collections import defaultdict
 from pathlib import Path
 
 from . import config
+from .chunk_csv import CHUNK_CSV_HEADERS
+from .embedder import build_text_to_embed, embed
+from .memory import MEMORY_GROUP
 from .storage import (
     _connect,
     _list_sync_groups,
+    add_chunks,
     delete_source_by_id,
     get_source_by_id,
     init_db,
     list_sources,
+    set_source_external_url,
     unmark_processed,
 )
+
+
+REQUIRED_CSV_FIELDS = frozenset({"source_path", "source_type", "chunk_index", "text"})
+
+
+def _strip_csv_row(d: dict[str, str | None]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for k, v in d.items():
+        key = (k or "").strip()
+        if not key:
+            continue
+        if isinstance(v, str):
+            out[key] = v.strip()
+        elif v is None:
+            out[key] = ""
+        else:
+            out[key] = str(v)
+    return out
+
+
+def _parse_int(val: str | None, _field: str) -> int | None:
+    s = (val or "").strip()
+    if s == "":
+        return None
+    try:
+        return int(s)
+    except ValueError:
+        return None
+
+
+def _parse_key_signals(raw: str | None) -> list[str] | str | None:
+    s = (raw or "").strip()
+    if not s:
+        return None
+    if s.startswith("["):
+        try:
+            data = json.loads(s)
+            if isinstance(data, list):
+                return [str(x).strip() for x in data if str(x).strip()]
+        except json.JSONDecodeError:
+            pass
+    return s
+
+
+def ensure_collection_db(group: str) -> None:
+    """Create group directory, sources/, and SQLite schema if new."""
+    gp = config.get_group_paths(group)
+    gp.group_dir.mkdir(parents=True, exist_ok=True)
+    gp.sources_dir.mkdir(parents=True, exist_ok=True)
+    conn = _connect(group)
+    try:
+        init_db(conn)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def cmd_import_csv(args: argparse.Namespace) -> int:
+    """Import chunks from CSV (same columns as Review export)."""
+    csv_path = Path(args.csv_path).expanduser().resolve()
+    if not csv_path.is_file():
+        print(f"Error: file not found: {csv_path}", file=sys.stderr)
+        return 1
+
+    name = (args.collection or "").strip()
+    if not name:
+        name = input("Collection name (created if missing): ").strip()
+    if not name:
+        print("Error: collection name is required.", file=sys.stderr)
+        return 1
+
+    group = config._sanitize_group(name)
+    if group == MEMORY_GROUP:
+        print("Error: do not import into the 'memory' collection; use MCP write_memory.", file=sys.stderr)
+        return 1
+
+    try:
+        with open(csv_path, newline="", encoding="utf-8-sig") as f:
+            reader = csv.DictReader(f)
+            if not reader.fieldnames:
+                print("Error: CSV has no header row.", file=sys.stderr)
+                return 1
+            fields = {(h or "").strip() for h in reader.fieldnames if h}
+            missing = REQUIRED_CSV_FIELDS - fields
+            if missing:
+                print(f"Error: CSV missing required column(s): {', '.join(sorted(missing))}", file=sys.stderr)
+                print(f"Expected header includes: {', '.join(CHUNK_CSV_HEADERS)}", file=sys.stderr)
+                return 1
+            rows = [_strip_csv_row(dict(r)) for r in reader]
+    except OSError as e:
+        print(f"Error reading CSV: {e}", file=sys.stderr)
+        return 1
+
+    by_source: dict[tuple[str, str], list[dict[str, str]]] = defaultdict(list)
+    for r in rows:
+        sp = (r.get("source_path") or "").strip()
+        st = (r.get("source_type") or "").strip() or ".txt"
+        if not sp:
+            print("Warning: skipping row with empty source_path.", file=sys.stderr)
+            continue
+        by_source[(sp, st)].append(r)
+
+    if not by_source:
+        print("Error: no importable rows (need source_path and chunk rows).", file=sys.stderr)
+        return 1
+
+    existed_before = group in _list_sync_groups()
+    ensure_collection_db(group)
+    gp = config.get_group_paths(group)
+    if not existed_before:
+        print(f"Created collection '{group}' at {gp.group_dir}")
+    else:
+        print(f"Using existing collection '{group}'.")
+
+    conn = _connect(group)
+    try:
+        init_db(conn)
+        total_chunks = 0
+        for (source_path, source_type), src_rows in sorted(by_source.items(), key=lambda x: x[0][0]):
+
+            def row_chunk_index(row: dict[str, str]) -> int:
+                v = _parse_int(row.get("chunk_index", ""), "chunk_index")
+                return v if v is not None else 0
+
+            src_rows.sort(key=row_chunk_index)
+
+            doc_summary = ""
+            for r in src_rows:
+                if (r.get("doc_summary") or "").strip():
+                    doc_summary = r["doc_summary"].strip()
+                    break
+            canonical = ""
+            for r in src_rows:
+                if (r.get("canonical_url") or "").strip():
+                    canonical = r["canonical_url"].strip()
+                    break
+
+            existing = conn.execute(
+                "SELECT id FROM sources WHERE source_path = ?", (source_path,)
+            ).fetchone()
+            if existing:
+                if args.replace_sources:
+                    delete_source_by_id(conn, int(existing["id"]))
+                    print(f"  Replaced existing source: {source_path!r}")
+                else:
+                    print(
+                        f"  Skipping existing source {source_path!r} "
+                        "(use --replace-sources to delete and re-import).",
+                        file=sys.stderr,
+                    )
+                    continue
+
+            valid_rows = [r for r in src_rows if (r.get("text") or "").strip()]
+            if not valid_rows:
+                print(f"  Skipping {source_path!r}: no rows with non-empty text.", file=sys.stderr)
+                continue
+
+            embed_inputs = [
+                build_text_to_embed(
+                    doc_summary or None,
+                    ((r.get("primary_question_answered") or "").strip() or None),
+                    (r.get("text") or "").strip(),
+                )
+                for r in valid_rows
+            ]
+
+            batch_size = 100
+            all_embs: list[list[float]] = []
+            for i in range(0, len(embed_inputs), batch_size):
+                batch = embed_inputs[i : i + batch_size]
+                all_embs.extend(embed(batch, group=group))
+
+            bodies: list[dict] = []
+            for r, emb in zip(valid_rows, all_embs, strict=True):
+                text = (r.get("text") or "").strip()
+                pqa = (r.get("primary_question_answered") or "").strip() or None
+                ks = _parse_key_signals(r.get("key_signals", ""))
+                page_v = _parse_int(r.get("page", ""), "page")
+                art = (r.get("artifact_type") or "text").strip() or "text"
+                apath = (r.get("artifact_path") or "").strip() or None
+                role = (r.get("chunk_role") or "").strip() or None
+                concept = (r.get("concept") or "").strip() or None
+                dctx = (r.get("decision_context") or "").strip() or None
+                chunk: dict = {
+                    "text": text,
+                    "embedding": emb,
+                    "artifact_type": art,
+                    "artifact_path": apath,
+                    "page": page_v,
+                    "concept": concept,
+                    "decision_context": dctx,
+                    "primary_question_answered": pqa,
+                    "chunk_role": role,
+                }
+                if isinstance(ks, list):
+                    chunk["key_signals"] = ks
+                elif ks:
+                    chunk["key_signals"] = ks
+                bodies.append(chunk)
+
+            add_chunks(
+                conn,
+                source_path,
+                source_type,
+                bodies,
+                doc_summary=doc_summary or None,
+            )
+            sid_row = conn.execute(
+                "SELECT id FROM sources WHERE source_path = ?", (source_path,)
+            ).fetchone()
+            if sid_row and canonical:
+                set_source_external_url(conn, int(sid_row["id"]), canonical)
+            conn.commit()
+            total_chunks += len(bodies)
+            print(f"  Imported {len(bodies)} chunk(s) for {source_path!r}")
+
+        print(f"Done. {total_chunks} chunk(s) written for this import.")
+        return 0
+    finally:
+        conn.close()
 
 
 def cmd_collections(args: argparse.Namespace) -> int:
@@ -234,7 +462,35 @@ def main() -> int:
         "path_or_filename",
         help="Full ingest path or filename (e.g. 'Issue Briefing - Key PLC Protocols.pdf')"
     )
-    
+
+    import_csv_parser = subparsers.add_parser(
+        "import-csv",
+        help="Import chunks from CSV (Review export / Claude handoff format)",
+        description=(
+            "Create the collection if it does not exist, then embed and insert chunks. "
+            "CSV must include columns: source_path, source_type, chunk_index, text "
+            f"(full header: {', '.join(CHUNK_CSV_HEADERS)}). "
+            "Rows are grouped by (source_path, source_type). Chunk order follows chunk_index "
+            "(re-numbered 0..N-1 in the DB). Skips sources that already exist unless "
+            "--replace-sources is set."
+        ),
+    )
+    import_csv_parser.add_argument(
+        "csv_path",
+        help="Path to the CSV file",
+    )
+    import_csv_parser.add_argument(
+        "-c",
+        "--collection",
+        metavar="NAME",
+        help="Collection name (sanitized like ingest subfolders). If omitted, you are prompted.",
+    )
+    import_csv_parser.add_argument(
+        "--replace-sources",
+        action="store_true",
+        help="If a source_path already exists, delete its chunks and re-import.",
+    )
+
     args = parser.parse_args()
     
     # Route to command handler
@@ -246,6 +502,8 @@ def main() -> int:
         return cmd_delete(args)
     elif args.command == "reprocess":
         return cmd_reprocess(args)
+    elif args.command == "import-csv":
+        return cmd_import_csv(args)
     else:
         parser.print_help()
         return 1

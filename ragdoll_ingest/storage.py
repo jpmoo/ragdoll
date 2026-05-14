@@ -581,6 +581,13 @@ def set_source_summary(conn: sqlite3.Connection, source_id: int, summary: str | 
     conn.execute("UPDATE sources SET summary = ? WHERE id = ?", (summary, source_id))
 
 
+def set_source_external_url(conn: sqlite3.Connection, source_id: int, external_url: str | None) -> None:
+    """Set canonical browser URL for a source (e.g. web-ingest). Empty string clears to NULL."""
+    init_db(conn)
+    u = (external_url or "").strip() or None
+    conn.execute("UPDATE sources SET external_url = ? WHERE id = ?", (u, source_id))
+
+
 def list_sources(conn: sqlite3.Connection) -> list[tuple[int, str, int, str | None]]:
     """List all sources with their IDs, paths, chunk counts, and summary. Returns list of (source_id, source_path, count, summary)."""
     init_db(conn)

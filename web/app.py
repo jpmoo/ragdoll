@@ -19,6 +19,7 @@ from starlette.requests import Request
 from ragdoll_ingest import config
 from ragdoll_ingest.config import get_env
 from ragdoll_ingest.embedder import build_text_to_embed, embed
+from ragdoll_ingest.chunk_csv import CHUNK_CSV_HEADERS
 from ragdoll_ingest.interpreters import extract_chunk_semantic_labels
 from ragdoll_ingest.storage import (
     _connect,
@@ -43,27 +44,6 @@ logger = logging.getLogger(__name__)
 
 REVIEW_PORT = 9043
 WEB_ROOT = Path(__file__).resolve().parent
-
-# Claude / web-ingest handoff: one row per chunk, source metadata repeated.
-EXPORT_CHUNK_CSV_HEADERS = [
-    "source_key",
-    "canonical_url",
-    "source_title",
-    "fetched_at",
-    "source_type",
-    "source_path",
-    "doc_summary",
-    "chunk_index",
-    "text",
-    "page",
-    "chunk_role",
-    "primary_question_answered",
-    "key_signals",
-    "artifact_type",
-    "artifact_path",
-    "concept",
-    "decision_context",
-]
 
 
 def _chunk_export_row_to_csv_values(row: dict[str, Any]) -> list[Any]:
@@ -217,7 +197,7 @@ def api_export_chunks_csv(group: str):
         conn.close()
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(EXPORT_CHUNK_CSV_HEADERS)
+    writer.writerow(list(CHUNK_CSV_HEADERS))
     for row in rows:
         writer.writerow(_chunk_export_row_to_csv_values(row))
     fname = re.sub(r"[^\w.\-]+", "_", safe_group).strip("_") or "collection"
