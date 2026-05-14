@@ -21,7 +21,7 @@ from .storage import (
     set_source_external_url,
 )
 
-REQUIRED_CSV_FIELDS = frozenset({"source_path", "source_type", "chunk_index", "text"})
+REQUIRED_CSV_FIELDS = frozenset({"chunk_index", "text"})
 
 
 def _strip_csv_row(d: dict[str, str | None]) -> dict[str, str]:
@@ -76,6 +76,24 @@ def ensure_collection_db(group: str) -> None:
         conn.close()
 
 
+def _effective_source_path(row: dict[str, str]) -> str | None:
+    """Stable per-document id for grouping and DB uniqueness.
+
+    Prefer explicit ``source_path`` (filesystem path from export). If blank, use
+    ``canonical_url`` (typical for web/Claude handoffs) or ``import:source_key:{source_key}``.
+    """
+    sp = (row.get("source_path") or "").strip()
+    if sp:
+        return sp
+    url = (row.get("canonical_url") or "").strip()
+    if url:
+        return url
+    sk = (row.get("source_key") or "").strip()
+    if sk:
+        return f"import:source_key:{sk}"
+    return None
+
+
 def parse_csv_bytes(data: bytes) -> list[dict[str, str]]:
     """Parse CSV body (UTF-8 with optional BOM). Raises ValueError on bad header or empty."""
     text = data.decode("utf-8-sig")
@@ -118,14 +136,17 @@ def run_csv_import(
 
     by_source: dict[tuple[str, str], list[dict[str, str]]] = defaultdict(list)
     for r in rows:
-        sp = (r.get("source_path") or "").strip()
+        sp = _effective_source_path(r)
         st = (r.get("source_type") or "").strip() or ".txt"
         if not sp:
             continue
         by_source[(sp, st)].append(r)
 
     if not by_source:
-        raise ValueError("No importable rows (need source_path and chunk rows).")
+        raise ValueError(
+            "No importable rows. Each row needs non-empty text and a document id: "
+            "set source_path, or leave it blank and set canonical_url (or source_key)."
+        )
 
     existed_before = group in _list_sync_groups()
     ensure_collection_db(group)

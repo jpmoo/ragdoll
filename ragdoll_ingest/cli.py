@@ -277,11 +277,12 @@ def main() -> int:
         help="Import chunks from CSV (Review export / Claude handoff format)",
         description=(
             "Create the collection if it does not exist, then embed and insert chunks. "
-            "CSV must include columns: source_path, source_type, chunk_index, text "
-            f"(full header: {', '.join(CHUNK_CSV_HEADERS)}). "
-            "Rows are grouped by (source_path, source_type). Chunk order follows chunk_index "
-            "(re-numbered 0..N-1 in the DB). Skips sources that already exist unless "
-            "--replace-sources is set."
+            "CSV must include columns: chunk_index, text (full header may match export: "
+            f"{', '.join(CHUNK_CSV_HEADERS)}). "
+            "Rows are grouped per document using source_path if set, else canonical_url, "
+            "else import:source_key:{id}. source_type defaults to .txt if blank. "
+            "Chunk order follows chunk_index (stored as 0..N-1). Skips sources that already "
+            "exist unless --replace-sources is set."
         ),
     )
     import_csv_parser.add_argument(
