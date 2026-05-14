@@ -32,7 +32,7 @@ def rembed_group(group: str) -> tuple[int, int]:
         raw = list_sources(conn)
         sources_processed = 0
         chunks_updated = 0
-        for source_id, _source_path, _count, summary in raw:
+        for source_id, _source_path, _count, summary, _ in raw:
             summary = (summary or "").strip() or ""
             chunks = get_chunks_for_source(conn, source_id)
             if not chunks:

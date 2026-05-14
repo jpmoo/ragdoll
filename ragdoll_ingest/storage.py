@@ -588,25 +588,33 @@ def set_source_external_url(conn: sqlite3.Connection, source_id: int, external_u
     conn.execute("UPDATE sources SET external_url = ? WHERE id = ?", (u, source_id))
 
 
-def list_sources(conn: sqlite3.Connection) -> list[tuple[int, str, int, str | None]]:
-    """List all sources with their IDs, paths, chunk counts, and summary. Returns list of (source_id, source_path, count, summary)."""
+def list_sources(conn: sqlite3.Connection) -> list[tuple[int, str, int, str | None, str | None]]:
+    """List all sources: (source_id, source_path, chunk_count, summary, external_url)."""
     init_db(conn)
     _migrate_sources_table(conn)  # Ensure migration is done
-    
-    rows = conn.execute("""
-        SELECT s.id, s.source_path, s.summary, COUNT(c.id) as count
+
+    rows = conn.execute(
+        """
+        SELECT s.id, s.source_path, s.summary, s.external_url, COUNT(c.id) AS count
         FROM sources s
         LEFT JOIN chunks c ON c.source_id = s.id
-        GROUP BY s.id, s.source_path, s.summary
+        GROUP BY s.id, s.source_path, s.summary, s.external_url
         ORDER BY s.id
-    """).fetchall()
-    
+        """
+    ).fetchall()
+
     if rows:
         return [
-            (row["id"], row["source_path"], row["count"], (row["summary"] or "").strip() or None)
+            (
+                row["id"],
+                row["source_path"],
+                row["count"],
+                (row["summary"] or "").strip() or None,
+                (row["external_url"] or "").strip() or None,
+            )
             for row in rows
         ]
-    
+
     return []
 
 

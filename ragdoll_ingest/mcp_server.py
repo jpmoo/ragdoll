@@ -137,7 +137,7 @@ def _make_mcp() -> "FastMCP":
             gp = config.get_group_paths(safe_group)
             sources_dir = gp.sources_dir.resolve()
             out = []
-            for source_id, source_path, count, summary in raw:
+            for source_id, source_path, count, summary, _external_url in raw:
                 try:
                     p = Path(source_path)
                     if p.is_absolute() and str(p).startswith(str(sources_dir)):

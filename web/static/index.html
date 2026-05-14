@@ -523,9 +523,11 @@
       const { sources } = await fetchJson(`/groups/${encodeURIComponent(state.group)}/sources`);
       const sel = qs('#sourceSelect');
       sel.disabled = false;
-      sel.innerHTML = '<option value="">Select source…</option>' + sources.map(s =>
-        `<option value="${s.source_id}" data-fetch-path="${(s.fetch_path || '').replace(/"/g, '&quot;')}">${s.display_name || s.source_id} (${s.chunk_count})</option>`
-      ).join('');
+      sel.innerHTML = '<option value="">Select source…</option>' + sources.map(s => {
+        const fetchPath = (s.fetch_path || '').replace(/"/g, '&quot;');
+        const previewUrl = (s.preview_url || '').replace(/"/g, '&quot;');
+        return `<option value="${s.source_id}" data-fetch-path="${fetchPath}" data-preview-url="${previewUrl}">${s.display_name || s.source_id} (${s.chunk_count})</option>`;
+      }).join('');
       state.sourceId = null;
       state.source = null;
       renderSource();
@@ -552,7 +554,10 @@
       const sel = qs('#sourceSelect');
       const opt = sel.selectedOptions[0];
       state.sourceId = opt ? parseInt(opt.value, 10) : null;
-      state.source = opt ? { fetch_path: opt.dataset.fetchPath } : null;
+      state.source = opt ? {
+        fetch_path: opt.dataset.fetchPath,
+        preview_url: opt.dataset.previewUrl || '',
+      } : null;
       renderSource();
       loadChunks();
     }
@@ -572,6 +577,18 @@
         state.pdfDoc = null;
         return;
       }
+      const preview = (state.source.preview_url || '').trim();
+      if (preview) {
+        ph.style.display = 'none';
+        pdfViewer.style.display = 'none';
+        frame.src = preview;
+        frame.style.display = 'block';
+        link.href = preview;
+        link.style.display = 'inline';
+        link.title = 'Open in new tab if the embedded page is blank (some sites block framing).';
+        state.pdfDoc = null;
+        return;
+      }
       const path = state.source.fetch_path;
       if (!path) {
         ph.textContent = 'No preview path for this source.';
@@ -586,6 +603,7 @@
       const url = `${API}/groups/${encodeURIComponent(state.group)}/fetch/${path.split('/').map(encodeURIComponent).join('/')}`;
       link.href = url;
       link.style.display = 'inline';
+      link.title = '';
       const ext = (path.split('.').pop() || '').toLowerCase();
       if (ext === 'pdf') {
         pdfViewer.style.display = 'none';

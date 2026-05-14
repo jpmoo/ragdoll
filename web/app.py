@@ -47,6 +47,17 @@ REVIEW_PORT = 9043
 WEB_ROOT = Path(__file__).resolve().parent
 
 
+def _http_preview_url(source_path: str, external_url: str | None) -> str | None:
+    """HTTPS URL for in-browser preview when the source is web-based, not a local file."""
+    eu = (external_url or "").strip()
+    if eu.startswith(("http://", "https://")):
+        return eu
+    sp = (source_path or "").strip()
+    if sp.startswith(("http://", "https://")):
+        return sp
+    return None
+
+
 def _chunk_export_row_to_csv_values(row: dict[str, Any]) -> list[Any]:
     source_path = row.get("source_path") or ""
     title = Path(source_path).name if source_path else ""
@@ -163,7 +174,7 @@ def api_list_sources(group: str):
         gp = config.get_group_paths(safe_group)
         sources_dir = gp.sources_dir.resolve()
         out = []
-        for source_id, source_path, count, summary in raw:
+        for source_id, source_path, count, summary, external_url in raw:
             try:
                 p = Path(source_path)
                 if p.is_absolute() and str(p).startswith(str(sources_dir)):
@@ -173,6 +184,7 @@ def api_list_sources(group: str):
                 fetch_path = str(fetch_path).replace("\\", "/")
             except Exception:
                 fetch_path = Path(source_path).name if source_path else ""
+            preview_url = _http_preview_url(source_path, external_url)
             out.append({
                 "source_id": source_id,
                 "source_path": source_path,
@@ -180,6 +192,8 @@ def api_list_sources(group: str):
                 "fetch_path": fetch_path,
                 "chunk_count": count,
                 "summary": summary,
+                "external_url": external_url,
+                "preview_url": preview_url,
             })
         return {"sources": out}
     finally:

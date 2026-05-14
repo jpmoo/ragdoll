@@ -135,7 +135,7 @@ def main() -> int:
         try:
             init_db(conn)
             raw = list_sources(conn)
-            for source_id, source_path, count, summary in raw:
+            for source_id, source_path, count, summary, _external_url in raw:
                 updated, set_summary = migrate_one_source(conn, group, source_id, source_path, summary)
                 total_stripped += updated
                 if set_summary:
