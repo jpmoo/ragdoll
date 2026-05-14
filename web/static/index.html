@@ -363,6 +363,7 @@
         <option value="">Select source…</option>
       </select>
       <button type="button" id="exportCsvBtn" class="btn-secondary" disabled title="Download all chunks in this collection as CSV">Export CSV</button>
+      <button type="button" id="importCsvBtn" class="btn-secondary" title="Import chunks from CSV (same format as export)">Import CSV</button>
       <a id="openSource" href="#" target="_blank" rel="noopener" style="color: var(--accent); font-size: 0.9rem;">Open in new tab</a>
     </header>
 
@@ -455,6 +456,30 @@
         <div class="modal-actions">
           <button type="button" id="addSampleCancel">Cancel</button>
           <button type="submit" class="primary">Add</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="importCsvModal" class="modal-overlay" role="dialog" aria-label="Import CSV">
+    <div class="modal-box">
+      <h3>Import CSV</h3>
+      <p style="font-size: 0.85rem; color: var(--muted); margin-top: 0;">Same columns as Export CSV. Creates the collection if it does not exist yet.</p>
+      <form id="importCsvForm">
+        <div class="form-row">
+          <label for="importCollection">Collection name *</label>
+          <input type="text" id="importCollection" required placeholder="e.g. web_docs" autocomplete="off" />
+        </div>
+        <div class="form-row">
+          <label for="importFile">CSV file *</label>
+          <input type="file" id="importFile" accept=".csv,text/csv" required />
+        </div>
+        <div class="form-row">
+          <label><input type="checkbox" id="importReplace" /> Replace existing sources (same <code>source_path</code>)</label>
+        </div>
+        <div class="modal-actions">
+          <button type="button" id="importCsvCancel">Cancel</button>
+          <button type="submit" class="primary">Import</button>
         </div>
       </form>
     </div>
@@ -900,6 +925,64 @@
       a.click();
       document.body.removeChild(a);
       toast('Export started.');
+    });
+
+    function openImportCsvModal() {
+      qs('#importCollection').value = state.group || '';
+      qs('#importFile').value = '';
+      qs('#importReplace').checked = false;
+      qs('#importCsvModal').classList.add('visible');
+    }
+    qs('#importCsvBtn').addEventListener('click', openImportCsvModal);
+    qs('#importCsvCancel').addEventListener('click', function() {
+      qs('#importCsvModal').classList.remove('visible');
+    });
+    qs('#importCsvForm').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      const coll = (qs('#importCollection').value || '').trim();
+      const fileInput = qs('#importFile');
+      const file = fileInput.files && fileInput.files[0];
+      if (!coll) {
+        toast('Collection name required.');
+        return;
+      }
+      if (!file) {
+        toast('Choose a CSV file.');
+        return;
+      }
+      const fd = new FormData();
+      fd.append('collection', coll);
+      fd.append('replace_sources', qs('#importReplace').checked ? 'true' : 'false');
+      fd.append('file', file);
+      try {
+        const r = await fetch(API + '/import/csv', { method: 'POST', body: fd });
+        let data = {};
+        try {
+          data = await r.json();
+        } catch (_) {}
+        if (!r.ok) {
+          let d = data.detail;
+          if (Array.isArray(d)) {
+            d = d.map(function(x) { return x.msg || JSON.stringify(x); }).join('; ');
+          }
+          throw new Error(d || r.statusText || String(r.status));
+        }
+        qs('#importCsvModal').classList.remove('visible');
+        state.group = data.group || coll;
+        await loadGroups();
+        if (data.group) qs('#groupSelect').value = data.group;
+        syncExportCsvButton();
+        if (state.group) await loadSources();
+        else {
+          renderSource();
+          renderChunks();
+        }
+        const n = data.total_chunks != null ? data.total_chunks : '?';
+        const g = data.group || coll;
+        toast('Imported ' + n + ' chunk(s) into ' + g + '.');
+      } catch (err) {
+        toast('Import failed: ' + (err.message || err));
+      }
     });
     qsAll('input[name="filter"]').forEach(el => el.addEventListener('change', function() {
       if (this.value === 'page' && state.pdfDoc) {

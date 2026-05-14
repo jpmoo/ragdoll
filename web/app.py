@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -20,6 +20,7 @@ from ragdoll_ingest import config
 from ragdoll_ingest.config import get_env
 from ragdoll_ingest.embedder import build_text_to_embed, embed
 from ragdoll_ingest.chunk_csv import CHUNK_CSV_HEADERS
+from ragdoll_ingest.csv_import import parse_csv_bytes, run_csv_import
 from ragdoll_ingest.interpreters import extract_chunk_semantic_labels
 from ragdoll_ingest.storage import (
     _connect,
@@ -209,6 +210,40 @@ def api_export_chunks_csv(group: str):
             "Content-Disposition": f'attachment; filename="ragdoll-{fname}-chunks-export.csv"'
         },
     )
+
+
+CSV_IMPORT_MAX_BYTES = 50 * 1024 * 1024
+
+
+@app.post("/api/import/csv")
+async def api_import_csv(
+    collection: str = Form(...),
+    replace_sources: str = Form("false"),
+    file: UploadFile = File(...),
+):
+    """Import chunks from CSV (multipart). Same format as GET .../export/chunks.csv."""
+    fn = (file.filename or "").lower()
+    if not fn.endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Upload a .csv file.")
+    raw = await file.read()
+    if len(raw) > CSV_IMPORT_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="CSV file too large (max 50 MB).")
+    rs = (replace_sources or "").strip().lower() in ("1", "true", "yes", "on")
+    try:
+        rows = parse_csv_bytes(raw)
+        summary = run_csv_import(collection.strip(), rows, replace_sources=rs)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("CSV import failed")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    return {
+        "ok": True,
+        "group": summary.group,
+        "created_collection": summary.created_collection,
+        "total_chunks": summary.total_chunks,
+        "messages": summary.messages,
+    }
 
 
 @app.get("/api/groups/{group}/sources/{source_id}/chunks")
