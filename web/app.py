@@ -60,7 +60,10 @@ def _http_preview_url(source_path: str, external_url: str | None) -> str | None:
 
 def _chunk_export_row_to_csv_values(row: dict[str, Any]) -> list[Any]:
     source_path = row.get("source_path") or ""
-    title = Path(source_path).name if source_path else ""
+    raw_title = row.get("display_title")
+    if raw_title and isinstance(raw_title, str):
+        raw_title = raw_title.strip()
+    title = raw_title or (Path(source_path).name if source_path else "")
     page = row.get("page")
     page_out: Any = "" if page is None else page
     ks = row.get("key_signals")
@@ -174,7 +177,7 @@ def api_list_sources(group: str):
         gp = config.get_group_paths(safe_group)
         sources_dir = gp.sources_dir.resolve()
         out = []
-        for source_id, source_path, count, summary, external_url in raw:
+        for source_id, source_path, count, summary, external_url, display_title in raw:
             try:
                 p = Path(source_path)
                 if p.is_absolute() and str(p).startswith(str(sources_dir)):
@@ -185,10 +188,13 @@ def api_list_sources(group: str):
             except Exception:
                 fetch_path = Path(source_path).name if source_path else ""
             preview_url = _http_preview_url(source_path, external_url)
+            basename = Path(source_path).name if source_path else f"Source {source_id}"
+            disp = (display_title or "").strip() if display_title else ""
             out.append({
                 "source_id": source_id,
                 "source_path": source_path,
-                "display_name": Path(source_path).name if source_path else f"Source {source_id}",
+                "display_name": disp or basename,
+                "display_title": disp or None,
                 "fetch_path": fetch_path,
                 "chunk_count": count,
                 "summary": summary,

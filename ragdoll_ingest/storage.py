@@ -324,6 +324,11 @@ def init_db(conn: sqlite3.Connection) -> None:
     except sqlite3.OperationalError as e:
         if "duplicate" not in str(e).lower():
             raise
+    try:
+        conn.execute("ALTER TABLE sources ADD COLUMN display_title TEXT")
+    except sqlite3.OperationalError as e:
+        if "duplicate" not in str(e).lower():
+            raise
 
     # Check if chunks table exists
     table_exists = conn.execute(
@@ -588,17 +593,24 @@ def set_source_external_url(conn: sqlite3.Connection, source_id: int, external_u
     conn.execute("UPDATE sources SET external_url = ? WHERE id = ?", (u, source_id))
 
 
-def list_sources(conn: sqlite3.Connection) -> list[tuple[int, str, int, str | None, str | None]]:
-    """List all sources: (source_id, source_path, chunk_count, summary, external_url)."""
+def set_source_display_title(conn: sqlite3.Connection, source_id: int, display_title: str | None) -> None:
+    """Human-readable document title (e.g. from CSV source_title). Empty string clears to NULL."""
+    init_db(conn)
+    t = (display_title or "").strip() or None
+    conn.execute("UPDATE sources SET display_title = ? WHERE id = ?", (t, source_id))
+
+
+def list_sources(conn: sqlite3.Connection) -> list[tuple[int, str, int, str | None, str | None, str | None]]:
+    """List all sources: (source_id, source_path, chunk_count, summary, external_url, display_title)."""
     init_db(conn)
     _migrate_sources_table(conn)  # Ensure migration is done
 
     rows = conn.execute(
         """
-        SELECT s.id, s.source_path, s.summary, s.external_url, COUNT(c.id) AS count
+        SELECT s.id, s.source_path, s.summary, s.external_url, s.display_title, COUNT(c.id) AS count
         FROM sources s
         LEFT JOIN chunks c ON c.source_id = s.id
-        GROUP BY s.id, s.source_path, s.summary, s.external_url
+        GROUP BY s.id, s.source_path, s.summary, s.external_url, s.display_title
         ORDER BY s.id
         """
     ).fetchall()
@@ -611,6 +623,7 @@ def list_sources(conn: sqlite3.Connection) -> list[tuple[int, str, int, str | No
                 row["count"],
                 (row["summary"] or "").strip() or None,
                 (row["external_url"] or "").strip() or None,
+                (row["display_title"] or "").strip() or None,
             )
             for row in rows
         ]
@@ -628,7 +641,7 @@ def fetch_chunks_for_csv_export(conn: sqlite3.Connection) -> list[dict[str, Any]
     rows = conn.execute(
         """
         SELECT s.id AS source_id, s.source_path, s.source_type, s.created_at AS source_created_at,
-               s.summary AS doc_summary, s.external_url AS canonical_url,
+               s.summary AS doc_summary, s.external_url AS canonical_url, s.display_title,
                c.chunk_index, c.text, c.page, c.chunk_role, c.primary_question_answered, c.key_signals,
                c.artifact_type, c.artifact_path, c.concept, c.decision_context
         FROM chunks c

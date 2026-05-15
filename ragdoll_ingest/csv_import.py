@@ -18,6 +18,7 @@ from .storage import (
     add_chunks,
     delete_source_by_id,
     init_db,
+    set_source_display_title,
     set_source_external_url,
 )
 
@@ -180,6 +181,11 @@ def run_csv_import(
                 if (r.get("canonical_url") or "").strip():
                     canonical = r["canonical_url"].strip()
                     break
+            source_title = ""
+            for r in src_rows:
+                if (r.get("source_title") or "").strip():
+                    source_title = r["source_title"].strip()
+                    break
 
             existing = conn.execute(
                 "SELECT id FROM sources WHERE source_path = ?", (source_path,)
@@ -250,8 +256,12 @@ def run_csv_import(
             sid_row = conn.execute(
                 "SELECT id FROM sources WHERE source_path = ?", (source_path,)
             ).fetchone()
-            if sid_row and canonical:
-                set_source_external_url(conn, int(sid_row["id"]), canonical)
+            sid = int(sid_row["id"]) if sid_row else None
+            if sid is not None:
+                if canonical:
+                    set_source_external_url(conn, sid, canonical)
+                if source_title:
+                    set_source_display_title(conn, sid, source_title)
             conn.commit()
             total_chunks += len(bodies)
             messages.append(f"Imported {len(bodies)} chunk(s) for {source_path!r}")

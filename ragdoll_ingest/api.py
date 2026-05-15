@@ -212,7 +212,6 @@ def _run_retrieval(
     uses different roles (conclusion, reasoning, open_threads, full) so we never apply role_filter to it.
     """
     results: list[dict[str, Any]] = []
-    base_cols = "source_path, source_type, chunk_index, text, embedding, artifact_type, artifact_path, page"
     for group_name in groups:
         conn = _connect(group_name)
         try:
@@ -221,15 +220,26 @@ def _run_retrieval(
             use_role_filter = role_filter and group_name != MEMORY_GROUP
             if use_role_filter:
                 placeholders = ",".join("?" * len(role_filter))
-                where = f" WHERE chunk_role IN ({placeholders})"
+                where = f" WHERE c.chunk_role IN ({placeholders})"
             else:
                 where = ""
             params: tuple = tuple(role_filter) if use_role_filter else ()
             try:
-                sql = f"SELECT {base_cols}, primary_question_answered, chunk_role FROM chunks{where}"
+                sql = (
+                    "SELECT c.source_path, c.source_type, c.chunk_index, c.text, c.embedding, "
+                    "c.artifact_type, c.artifact_path, c.page, s.display_title, "
+                    "c.primary_question_answered, c.chunk_role "
+                    "FROM chunks c "
+                    "LEFT JOIN sources s ON s.source_path = c.source_path" + where
+                )
                 rows = conn.execute(sql, params).fetchall()
             except Exception:
-                sql = f"SELECT {base_cols}, chunk_role FROM chunks{where}"
+                sql = (
+                    "SELECT c.source_path, c.source_type, c.chunk_index, c.text, c.embedding, "
+                    "c.artifact_type, c.artifact_path, c.page, s.display_title, c.chunk_role "
+                    "FROM chunks c "
+                    "LEFT JOIN sources s ON s.source_path = c.source_path" + where
+                )
                 rows = conn.execute(sql, params).fetchall()
 
             for row in rows:
@@ -239,7 +249,11 @@ def _run_retrieval(
                     if similarity < threshold:
                         continue
                     source_path = row["source_path"]
-                    source_name = Path(source_path).name
+                    path_basename = Path(source_path).name
+                    raw_title = row["display_title"] if "display_title" in row.keys() else None
+                    if raw_title and isinstance(raw_title, str):
+                        raw_title = raw_title.strip() or None
+                    source_name = raw_title or path_basename
                     fetch_url = None
                     # Memory group has no on-disk source files; skip fetch URL to avoid 404
                     if group_name != MEMORY_GROUP:
@@ -250,7 +264,7 @@ def _run_retrieval(
                                 try:
                                     rel_path = full_source_path.relative_to(gp.sources_dir)
                                 except ValueError:
-                                    rel_path = Path(source_name)
+                                    rel_path = Path(path_basename)
                             else:
                                 rel_path = Path(source_path)
                             parts = rel_path.parts

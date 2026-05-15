@@ -148,6 +148,10 @@
       text-align: center;
       color: var(--muted);
     }
+    .source-view .external-source-preview a {
+      color: var(--accent);
+      font-weight: 600;
+    }
     .pdf-viewer {
       display: flex;
       flex-direction: column;
@@ -364,7 +368,7 @@
       </select>
       <button type="button" id="exportCsvBtn" class="btn-secondary" disabled title="Download all chunks in this collection as CSV">Export CSV</button>
       <button type="button" id="importCsvBtn" class="btn-secondary" title="Import chunks from CSV (same format as export)">Import CSV</button>
-      <a id="openSource" href="#" target="_blank" rel="noopener" style="color: var(--accent); font-size: 0.9rem;">Open in new tab</a>
+      <a id="openSource" href="#" target="_blank" rel="noopener" style="color: var(--accent); font-size: 0.9rem;">Open in new window</a>
     </header>
 
     <section class="panel">
@@ -579,13 +583,24 @@
       }
       const preview = (state.source.preview_url || '').trim();
       if (preview) {
-        ph.style.display = 'none';
+        frame.style.display = 'none';
+        frame.src = '';
         pdfViewer.style.display = 'none';
-        frame.src = preview;
-        frame.style.display = 'block';
+        ph.innerHTML = '';
+        const wrap = document.createElement('p');
+        wrap.className = 'placeholder external-source-preview';
+        wrap.appendChild(document.createTextNode('This source is an external web page. '));
+        const a = document.createElement('a');
+        a.href = preview;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        a.textContent = 'Open in new window';
+        wrap.appendChild(a);
+        ph.appendChild(wrap);
+        ph.style.display = 'block';
         link.href = preview;
         link.style.display = 'inline';
-        link.title = 'Open in new tab if the embedded page is blank (some sites block framing).';
+        link.title = '';
         state.pdfDoc = null;
         return;
       }
@@ -619,7 +634,7 @@
       } else {
         frame.style.display = 'none';
         pdfViewer.style.display = 'none';
-        ph.innerHTML = 'Preview not available. <a href="' + url + '" target="_blank" rel="noopener">Open in new tab</a>';
+        ph.innerHTML = 'Preview not available. <a href="' + url + '" target="_blank" rel="noopener">Open in new window</a>';
         ph.style.display = 'block';
       }
     }

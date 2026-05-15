@@ -137,7 +137,7 @@ def _make_mcp() -> "FastMCP":
             gp = config.get_group_paths(safe_group)
             sources_dir = gp.sources_dir.resolve()
             out = []
-            for source_id, source_path, count, summary, _external_url in raw:
+            for source_id, source_path, count, summary, external_url, display_title in raw:
                 try:
                     p = Path(source_path)
                     if p.is_absolute() and str(p).startswith(str(sources_dir)):
@@ -146,12 +146,16 @@ def _make_mcp() -> "FastMCP":
                         name = Path(source_path).name if source_path else f"Source {source_id}"
                 except Exception:
                     name = source_path or f"Source {source_id}"
+                disp = (display_title or "").strip() if display_title else ""
+                pretty = disp or name
                 out.append({
                     "source_id": source_id,
-                    "source_name": name,
+                    "source_name": pretty,
+                    "display_title": disp or None,
                     "source_path": source_path,
                     "chunk_count": count,
                     "summary": summary or "",
+                    "external_url": external_url or "",
                 })
             return json.dumps(out)
         finally:
