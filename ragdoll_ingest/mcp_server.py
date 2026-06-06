@@ -1,4 +1,4 @@
-"""MCP server for RAGDoll: exposes query_rag and list_collections to MCP clients (stdio or HTTP/SSE)."""
+"""MCP server for RAGDoll: exposes query_rag and list_collections to MCP clients (stdio, SSE, or Streamable HTTP)."""
 
 import asyncio
 import json
@@ -16,13 +16,19 @@ logger = logging.getLogger(__name__)
 
 try:
     from mcp.server.fastmcp import FastMCP
+    from mcp.server.transport_security import TransportSecuritySettings
 except ImportError:
     FastMCP = None  # type: ignore[misc, assignment]
+    TransportSecuritySettings = None  # type: ignore[misc, assignment]
 
 
 def _make_mcp() -> "FastMCP":
     if FastMCP is None:
         raise RuntimeError("MCP support requires: pip install -e '.[mcp]'")
+    # Loopback bind + reverse proxy: clients send the public Host header; don't reject it.
+    transport_security = None
+    if config.MCP_HOST in ("127.0.0.1", "localhost", "::1"):
+        transport_security = TransportSecuritySettings(enable_dns_rebinding_protection=False)
     mcp = FastMCP(
         name="ragdoll",
         instructions=(
@@ -30,6 +36,9 @@ def _make_mcp() -> "FastMCP":
             "Use list_collections to discover collections. Use query_rag to search (when no collections are specified, the memory collection is included). "
             "Use write_memory to store a structured memory (Topic, Date, Tags, Conclusion, Reasoning, Open threads); memories are then searchable via query_rag."
         ),
+        host=config.MCP_HOST,
+        port=config.MCP_PORT,
+        transport_security=transport_security,
     )
 
     @mcp.tool()
@@ -171,24 +180,9 @@ def main() -> None:
     if transport in ("sse", "streamable-http", "http"):
         import uvicorn
         if transport == "streamable-http" or transport == "http":
-            # Streamable HTTP: POST at /mcp for session (mcp-remote, Claude). When mounted at /mcp, sub-app receives path / (streamable_http_path="/" in FastMCP).
-            try:
-                from starlette.applications import Starlette
-                from starlette.routing import Mount, Route
-                from starlette.responses import JSONResponse
-
-                def _mcp_base_ok(_request):
-                    return JSONResponse({"protocol": "mcp", "server": "ragdoll"})
-
-                app = Starlette(
-                    routes=[
-                        Route("/mcp", endpoint=_mcp_base_ok, methods=["GET"]),
-                        Route("/mcp/", endpoint=_mcp_base_ok, methods=["GET"]),
-                        Mount("/mcp", app=mcp.streamable_http_app()),
-                    ]
-                )
-            except ImportError:
-                app = mcp.streamable_http_app()
+            # FastMCP serves Streamable HTTP at /mcp (GET+POST). Do not add GET-only routes on
+            # the same path — they block POST and clients report "endpoint not found".
+            app = mcp.streamable_http_app()
         else:
             # SSE: /mcp/sse and /mcp/messages
             sse_app = mcp.sse_app("/mcp")
