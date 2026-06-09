@@ -1,5 +1,5 @@
 [Unit]
-Description=RAGDoll MCP Server (HTTP/SSE)
+Description=RAGDoll MCP Server (Streamable HTTP / SSE)
 After=network.target ragdoll-api.service
 Wants=network-online.target
 
@@ -7,8 +7,11 @@ Wants=network-online.target
 Type=simple
 EnvironmentFile=-/opt/ragdoll/env.ragdoll
 EnvironmentFile=-/etc/default/ragdoll-ingest
-Environment=RAGDOLL_MCP_TRANSPORT=sse
-# Override via: systemctl edit ragdoll-mcp
+# Transport/host/port come from env.ragdoll (RAGDOLL_MCP_TRANSPORT, default stdio).
+# Set RAGDOLL_MCP_TRANSPORT=streamable-http there for remote clients.
+# Do NOT hardcode Environment=RAGDOLL_MCP_TRANSPORT here: a unit-level Environment=
+# is applied after EnvironmentFile= and would override env.ragdoll (and Python's
+# config.setdefault can't recover it). Override via: systemctl edit ragdoll-mcp
 #   [Service]
 #   Environment="RAGDOLL_MCP_HOST=127.0.0.1"
 #   Environment="RAGDOLL_MCP_PORT=9044"
