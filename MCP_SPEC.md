@@ -335,7 +335,7 @@ Output: {
 
 **Error handling:** If Ollama is unreachable, `_do_query` raises an `HTTPException`. The MCP layer should catch this and raise an `McpError` with a human-readable message rather than letting a raw FastAPI exception bubble up.
 
-**Output size:** The full `results` array can be large for broad queries. Consider adding a `max_results` parameter (default 20) to `query_rag` to cap the flat results list. The `documents` grouped view already provides a natural summary.
+**Output size:** Broad queries can match hundreds of chunks. `query_rag` takes `max_results` (default 20), which caps both the flat `results` list and the grouped `documents` view (rebuilt from the kept chunks, with `context_index` / `context_total` renumbered). When capped, the response sets `_truncated: true` and `_total_matching` to the number of chunks that matched.
 
 **Security:** In stdio mode, the MCP server inherits the file permissions of the launching process. In SSE mode, bind to `127.0.0.1` by default (not `0.0.0.0`) and document that users should put it behind a reverse proxy with auth if exposing externally, consistent with how the review app is documented.
 

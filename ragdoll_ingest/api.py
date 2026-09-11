@@ -312,6 +312,20 @@ def _run_retrieval(
     return results
 
 
+def _number_context(results: list[dict[str, Any]]) -> None:
+    """Set context_index and context_total (1 of X, 2 of X) on each result, counted per source."""
+    key_to_count: dict[tuple[str, str], int] = {}
+    for r in results:
+        k = (r["group"], r["source_path"])
+        key_to_count[k] = key_to_count.get(k, 0) + 1
+    key_to_index: dict[tuple[str, str], int] = {}
+    for r in results:
+        k = (r["group"], r["source_path"])
+        key_to_index[k] = key_to_index.get(k, 0) + 1
+        r["context_index"] = key_to_index[k]
+        r["context_total"] = key_to_count[k]
+
+
 def _enrich_results_with_summary_and_context_index(
     results: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -327,17 +341,9 @@ def _enrich_results_with_summary_and_context_index(
                 key_to_summary[(group, source_path)] = get_source_summary_by_path(conn, source_path)
         finally:
             conn.close()
-    key_to_count: dict[tuple[str, str], int] = {}
     for r in results:
-        k = (r["group"], r["source_path"])
-        key_to_count[k] = key_to_count.get(k, 0) + 1
-    key_to_index: dict[tuple[str, str], int] = {}
-    for r in results:
-        k = (r["group"], r["source_path"])
-        key_to_index[k] = key_to_index.get(k, 0) + 1
-        r["source_summary"] = key_to_summary.get(k)
-        r["context_index"] = key_to_index[k]
-        r["context_total"] = key_to_count[k]
+        r["source_summary"] = key_to_summary.get((r["group"], r["source_path"]))
+    _number_context(results)
     # For insights, attach the insight's metadata (id, topic, tags, origin, confidence, ...) to each result
     insight_paths = [r["source_path"] for r in results if r["group"] == INSIGHTS_GROUP]
     if insight_paths:

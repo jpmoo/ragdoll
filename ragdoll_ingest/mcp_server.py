@@ -8,7 +8,7 @@ from pathlib import Path
 from fastapi import HTTPException
 
 from . import config
-from .api import _do_query
+from .api import _do_query, _group_results_by_document, _number_context
 from .insights import submit_insight_text
 from .storage import _connect, _list_sync_groups, init_db, list_sources
 
@@ -70,7 +70,7 @@ def _make_mcp() -> "FastMCP":
             threshold: Minimum cosine similarity (0.0–1.0). Lower = more results, less precise. Omit to use RAGDOLL_QUERY_THRESHOLD (default 0.45).
             collections: Collection names to search. If omitted or empty, searches all collections.
             limit_chunk_role: When true, infer up to 2 chunk roles from the prompt and restrict retrieval to those roles.
-            max_results: Maximum number of chunks to return in the flat results list. Default 20. Does not cap the grouped documents view.
+            max_results: Maximum number of chunks to return. Default 20. Applies to both the flat results list and the grouped documents view (_total_matching reports how many matched).
             synthesize: When true, LLM synthesizes prompt+history+RAG into instructions for an assistant or a direct answer.
             synthesis_mode: "instructions" (default) = instructions for the caller to use; "answer" = direct summary/answer.
             include_insights: When true (default), the insights collection is searched too, even if collections names others. Insight hits carry an "insight" object (id, topic, tags, origin, confidence).
@@ -95,12 +95,16 @@ def _make_mcp() -> "FastMCP":
             logger.exception("query_rag failed")
             raise ValueError(f"Query failed: {e}") from e
 
-        # Cap flat results for large responses (spec: max_results parameter)
+        # Cap results for large responses (spec: max_results parameter). Rebuild the documents view from the kept
+        # chunks too; otherwise it still carries every match (hundreds of chunks, megabytes of JSON).
         results = result.get("results") or []
         if len(results) > max_results:
+            kept = results[:max_results]
+            _number_context(kept)
             result = dict(result)
-            result["results"] = results[:max_results]
-            result["count"] = len(result["results"])
+            result["results"] = kept
+            result["documents"] = _group_results_by_document(kept)
+            result["count"] = len(kept)
             result["_truncated"] = True
             result["_total_matching"] = len(results)
 
