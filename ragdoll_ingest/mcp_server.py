@@ -14,6 +14,26 @@ from .storage import _connect, _list_sync_groups, init_db, list_sources
 
 logger = logging.getLogger(__name__)
 
+# Per-chunk fields that repeat their document's metadata; query_rag returns them once, on the document entry
+_DOCUMENT_LEVEL_FIELDS = ("source_url", "source_type", "source_summary", "insight")
+
+
+def _compact_query_result(result: dict) -> dict:
+    """Return each chunk's text and each document's metadata once, to keep MCP responses readable by clients.
+
+    results keeps the chunks in relevance order without document-level fields; documents keeps one entry per source
+    (summary, URL, type, insight metadata) with the chunk_ids it contributed instead of repeating those chunks.
+    """
+    out = dict(result)
+    out["results"] = [
+        {k: v for k, v in r.items() if k not in _DOCUMENT_LEVEL_FIELDS} for r in result.get("results") or []
+    ]
+    out["documents"] = [
+        {**{k: v for k, v in d.items() if k != "samples"}, "chunk_ids": [s["chunk_id"] for s in d.get("samples") or []]}
+        for d in result.get("documents") or []
+    ]
+    return out
+
 try:
     from mcp.server.fastmcp import FastMCP
     from mcp.server.transport_security import TransportSecuritySettings
@@ -64,6 +84,11 @@ def _make_mcp() -> "FastMCP":
         """Semantic similarity search over one or more RAGDoll document collections. Returns matching document chunks sorted by relevance.
         When synthesize=true, RAGDoll also uses its LLM to turn prompt+history+chunks into instructions or an answer (research-assistant style).
 
+        Response: "results" lists the matching chunks in relevance order (group, source_name, source_path, chunk_id, text,
+        similarity, chunk_role, page, context_index/context_total). "documents" has one entry per source, ordered by its best
+        chunk: source_summary, source_url, sample_count, the chunk_ids it contributed, and for the insights collection an
+        "insight" object. Each chunk's text and each document's summary appear once; join them on chunk_id.
+
         Args:
             prompt: Your question or information need.
             history: Optional prior conversation turns as plain text, used for query expansion.
@@ -73,7 +98,7 @@ def _make_mcp() -> "FastMCP":
             max_results: Maximum number of chunks to return. Default 20. Applies to both the flat results list and the grouped documents view (_total_matching reports how many matched).
             synthesize: When true, LLM synthesizes prompt+history+RAG into instructions for an assistant or a direct answer.
             synthesis_mode: "instructions" (default) = instructions for the caller to use; "answer" = direct summary/answer.
-            include_insights: When true (default), the insights collection is searched too, even if collections names others. Insight hits carry an "insight" object (id, topic, tags, origin, confidence).
+            include_insights: When true (default), the insights collection is searched too, even if collections names others. Insight documents carry an "insight" object (id, topic, tags, origin, confidence).
         """
         try:
             use_threshold = config.QUERY_THRESHOLD if threshold is None else threshold
@@ -108,7 +133,7 @@ def _make_mcp() -> "FastMCP":
             result["_truncated"] = True
             result["_total_matching"] = len(results)
 
-        return result
+        return _compact_query_result(result)
 
     async def submit_insight(content: str) -> dict:
         """Add an insight to the RAGDoll insights collection (MCP-only). It is searchable via query_rag immediately.

@@ -94,29 +94,29 @@ mcp = FastMCP(
 | `collections` | array of strings | no | `null` | Collection names to search. If omitted or empty, searches all collections |
 | `limit_chunk_role` | boolean | no | `false` | When true, asks the LLM to infer up to 2 chunk roles and restricts retrieval to those roles |
 
-**Output:** The full `_do_query()` response dict, which includes:
+**Output:** A compact form of the `_do_query()` response, in which each chunk's text and each document's metadata appear once (the HTTP API returns the full form, with chunks repeated under `documents[].samples`):
 
 - `query` — original prompt
 - `expanded_query` — LLM-expanded standalone information need
 - `threshold` — threshold used
-- `count` — total matching chunks
-- `documents` — array of document blocks, each containing:
+- `count` — number of chunks returned
+- `results` — matching chunks sorted by similarity (fields below)
+- `documents` — one entry per source, ordered by its best chunk:
   - `group`, `source_name`, `source_path`, `source_type`, `source_url`, `source_summary`
-  - `sample_count` — how many chunks from this document matched
-  - `samples` — array of chunk objects (see below)
-- `results` — flat array of all matching chunks (same data, sorted by similarity)
+  - `sample_count` — how many of the returned chunks came from this document
+  - `chunk_ids` — those chunks' ids (join to `results` on `chunk_id`)
+  - `insight` — for the `insights` collection: id, topic, tags, question, origin, status, confidence
 - `inferred_roles` / `limit_chunk_role` — present when role filtering was used
+- `_truncated` / `_total_matching` — present when `max_results` cut the list
 
-Each chunk in `samples` / `results`:
+Each chunk in `results`:
 
 | Field | Description |
 |---|---|
 | `group` | Collection name |
-| `source_name` | Filename of the source document |
+| `source_name` | Title or filename of the source document |
 | `source_path` | Full path in the sources directory |
-| `source_url` | Relative URL to fetch the source via the HTTP API (`/fetch/{group}/...`) |
-| `source_type` | File extension (`.pdf`, `.docx`, etc.) |
-| `source_summary` | LLM-generated document-level summary |
+| `chunk_id` | Chunk id within its collection |
 | `chunk_index` | Position of the chunk within its source document |
 | `text` | The chunk text |
 | `primary_question_answered` | Semantic label: what question this chunk answers |
@@ -292,21 +292,26 @@ Output: {
   "query": "What is double-loop learning?",
   "expanded_query": "A description of double-loop learning as a concept in organizational theory...",
   "count": 3,
+  "results": [
+    {
+      "group": "edleadership",
+      "source_name": "argyris_1977.pdf",
+      "chunk_id": 412,
+      "text": "Double-loop learning occurs when...",
+      "similarity": 0.81,
+      "chunk_role": "description",
+      "page": 4,
+      ...
+    }
+  ],
   "documents": [
     {
       "group": "edleadership",
       "source_name": "argyris_1977.pdf",
       "source_summary": "...",
       "sample_count": 2,
-      "samples": [
-        {
-          "text": "Double-loop learning occurs when...",
-          "similarity": 0.81,
-          "chunk_role": "description",
-          "page": 4,
-          ...
-        }
-      ]
+      "chunk_ids": [412, 415],
+      ...
     }
   ],
   ...
@@ -335,7 +340,7 @@ Output: {
 
 **Error handling:** If Ollama is unreachable, `_do_query` raises an `HTTPException`. The MCP layer should catch this and raise an `McpError` with a human-readable message rather than letting a raw FastAPI exception bubble up.
 
-**Output size:** Broad queries can match hundreds of chunks. `query_rag` takes `max_results` (default 20), which caps both the flat `results` list and the grouped `documents` view (rebuilt from the kept chunks, with `context_index` / `context_total` renumbered). When capped, the response sets `_truncated: true` and `_total_matching` to the number of chunks that matched.
+**Output size:** Broad queries can match hundreds of chunks. `query_rag` takes `max_results` (default 20), which caps both the flat `results` list and the grouped `documents` view (rebuilt from the kept chunks, with `context_index` / `context_total` renumbered). When capped, the response sets `_truncated: true` and `_total_matching` to the number of chunks that matched. The response is also compacted so no chunk text or document summary is repeated; a 20-chunk query that was 74K characters in the full form is about 28K compact.
 
 **Security:** In stdio mode, the MCP server inherits the file permissions of the launching process. In SSE mode, bind to `127.0.0.1` by default (not `0.0.0.0`) and document that users should put it behind a reverse proxy with auth if exposing externally, consistent with how the review app is documented.
 
