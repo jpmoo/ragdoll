@@ -390,7 +390,7 @@ The **`insights`** collection holds learnings RAGDoll builds from how its collec
   ragdoll insights retire 12 --reason "Contradicted by the 2026 handbook"
   ragdoll insights restore 12
   ```
-- **Migrating from memory:** deploy, restart the RAGDoll services, then run `ragdoll insights migrate-memory` (try `--dry-run` first). Each memory becomes an `agent` insight and `{DATA_DIR}/memory/` is moved to `{DATA_DIR}/_archive/`. Re-running skips memories already migrated.
+- **Migrating from memory:** deploy, restart the RAGDoll services, then run `ragdoll insights migrate-memory` (try `--dry-run` first) as the user that owns the data directory, with the services' environment loaded. With the default units (no `User=`) that's root: `sudo bash -c 'set -a; . /etc/default/ragdoll-ingest; set +a; /opt/ragdoll/.venv/bin/ragdoll insights migrate-memory'`. Each memory becomes an `agent` insight and `{DATA_DIR}/memory/` is moved to `{DATA_DIR}/_archive/`. Re-running skips memories already migrated.
 
 **Query log:** every API and MCP query is recorded in `{DATA_DIR}/_querylog/querylog.db` with its expanded query, embedding, and top hits (with text snapshots). It is the input for insight generation and is never listed as a collection. `ragdoll queries` lists recent queries; `ragdoll queries 42` shows one with its hits.
 

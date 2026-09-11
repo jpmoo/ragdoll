@@ -298,6 +298,14 @@ def cmd_insights(args: argparse.Namespace) -> int:
                 print(f"Skipped {r['skipped_empty']} with no content.")
             if r["archived_to"]:
                 print(f"Moved the memory collection to {r['archived_to']}")
+            if r["archive_error"]:
+                print(f"Error: the memory collection was not archived. {r['archive_error']}", file=sys.stderr)
+                print(
+                    "Re-run as the user that owns the data directory (e.g. sudo -u <service user>); "
+                    "memories already migrated are skipped.",
+                    file=sys.stderr,
+                )
+                return 1
             return 0
     except InsightError as e:
         print(f"Error: {e}", file=sys.stderr)

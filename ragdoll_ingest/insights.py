@@ -12,8 +12,8 @@ Replaces the old "memory" collection; see migrate_memory_collection().
 """
 
 import json
+import os
 import re
-import shutil
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -581,7 +581,9 @@ def migrate_memory_collection(*, archive: bool = True, dry_run: bool = False) ->
     Safe to re-run: memories already migrated (matched on their old source_path) are skipped. The memory dir is
     moved to {DATA_DIR}/_archive/ only after every memory has been migrated.
     """
-    result: dict[str, Any] = {"found": 0, "migrated": 0, "skipped_existing": 0, "skipped_empty": 0, "archived_to": None}
+    result: dict[str, Any] = {
+        "found": 0, "migrated": 0, "skipped_existing": 0, "skipped_empty": 0, "archived_to": None, "archive_error": None,
+    }
     gp = config.get_group_paths(LEGACY_MEMORY_GROUP)
     if not gp.rag_db_path.exists():
         return result
@@ -649,7 +651,12 @@ def migrate_memory_collection(*, archive: bool = True, dry_run: bool = False) ->
 
     if archive and not dry_run:
         dest = config.DATA_DIR / "_archive" / f"memory-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(gp.group_dir), str(dest))
-        result["archived_to"] = str(dest)
+        try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            # Rename only (same filesystem). shutil.move falls back to copy-then-delete, which leaves a
+            # duplicate copy behind when the delete isn't permitted.
+            os.rename(gp.group_dir, dest)
+            result["archived_to"] = str(dest)
+        except OSError as e:
+            result["archive_error"] = f"Could not move {gp.group_dir} to {dest}: {e}"
     return result
