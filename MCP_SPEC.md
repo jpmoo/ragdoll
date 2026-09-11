@@ -104,7 +104,7 @@ mcp = FastMCP(
 - `documents` — one entry per source, ordered by its best chunk:
   - `group`, `source_name`, `source_path`, `source_type`, `source_url`, `source_summary`
   - `sample_count` — how many of the returned chunks came from this document
-  - `chunk_ids` — those chunks' ids (join to `results` on `chunk_id`)
+  - `chunk_ids` — those chunks' ids (join to `results` on `group` + `chunk_id`; ids are unique only within a collection)
   - `insight` — for the `insights` collection: id, topic, tags, question, origin, status, confidence
 - `inferred_roles` / `limit_chunk_role` — present when role filtering was used
 - `_truncated` / `_total_matching` — present when `max_results` cut the list

@@ -87,7 +87,7 @@ def _make_mcp() -> "FastMCP":
         Response: "results" lists the matching chunks in relevance order (group, source_name, source_path, chunk_id, text,
         similarity, chunk_role, page, context_index/context_total). "documents" has one entry per source, ordered by its best
         chunk: source_summary, source_url, sample_count, the chunk_ids it contributed, and for the insights collection an
-        "insight" object. Each chunk's text and each document's summary appear once; join them on chunk_id.
+        "insight" object. Each chunk's text and each document's summary appear once. Chunk ids are unique only within a collection, so join on group + chunk_id.
 
         Args:
             prompt: Your question or information need.
