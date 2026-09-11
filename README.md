@@ -373,9 +373,33 @@ sudo systemctl enable --now ragdoll-mcp
   **If you get 502 when using remote SSE:** the client is GETting `.../ragdoll/sse`; the proxy must forward that to the MCP server so the backend receives **`/mcp/sse`** (RAGDoll mounts the SSE app at `/mcp`). On the server: (1) Confirm the MCP service is up: `sudo systemctl status ragdoll-mcp` and that `env.ragdoll` has `RAGDOLL_MCP_TRANSPORT=sse`. (2) In Caddy, route `/ragdoll` to the MCP backend (e.g. port 9044) and **rewrite the path** so `/ragdoll` becomes `/mcp` (e.g. `uri replace /ragdoll /mcp` then `reverse_proxy 127.0.0.1:9044`). (3) From the server, test: `curl -N http://127.0.0.1:9044/mcp/sse` — you should get an SSE stream (or at least not 502). If that works but the browser still gets 502, check Caddy’s rewrite and that the upstream Host header (if set) matches what the app expects.
 - **Cursor / Claude Code** — For local, use the same `command`/`env` block as above in your project’s `.mcp.json` or global MCP config. For remote, use the same `npx`/`mcp-remote`/`--transport sse-only` args.
 
-**Tools:** `list_collections` (list available collections), `query_rag` (semantic search with optional `prompt`, `history`, `threshold`, `collections`, `limit_chunk_role`, `max_results`, `synthesize`, `synthesis_mode`), `write_memory` (MCP-only: store a structured memory in the `memory` collection). When no collections are specified, `query_rag` searches all collections including `memory`; memory results include `memory_topic`, `memory_date`, and `memory_tags`. Memories use the format: Topic, Date, Tags, Conclusion, Reasoning, Open threads (each section and the full text are embedded for similarity search). When `synthesize=true`, RAGDoll uses its LLM to turn prompt+history+chunks into **instructions** or a **direct answer**. Optional resources: `ragdoll://collections`, `ragdoll://collections/{group}/sources`.
+**Tools:** `list_collections` (list available collections), `query_rag` (semantic search with optional `prompt`, `history`, `threshold`, `collections`, `include_insights`, `limit_chunk_role`, `max_results`, `synthesize`, `synthesis_mode`), `submit_insight` (MCP-only: add an insight to the `insights` collection; `write_memory` remains as a deprecated alias). `query_rag` always searches the `insights` collection too, even when `collections` is set, unless `include_insights=false`; insight results carry an `insight` object (id, topic, tags, origin, confidence, ...). Submissions use the format: Topic, Tags, Insight, Question, Reasoning, Open questions, Confidence (the old memory format with Conclusion / Open threads also parses). See **Insights and the query log** below. When `synthesize=true`, RAGDoll uses its LLM to turn prompt+history+chunks into **instructions** or a **direct answer**. Optional resources: `ragdoll://collections`, `ragdoll://collections/{group}/sources`.
 
-**All four services (ingest, API, review web, MCP)** can be installed together; copy `ragdoll-mcp.service` along with the others and enable/start as needed. After updating the RAGDoll code, restart the MCP server (e.g. `sudo systemctl restart ragdoll-mcp`) and, for remote clients, restart the client so it re-fetches the tool list and sees new tools like `write_memory`.
+**All four services (ingest, API, review web, MCP)** can be installed together; copy `ragdoll-mcp.service` along with the others and enable/start as needed. After updating the RAGDoll code, restart the MCP server (e.g. `sudo systemctl restart ragdoll-mcp`) and, for remote clients, restart the client so it re-fetches the tool list and sees new tools like `submit_insight`.
+
+## Insights and the query log
+
+The **`insights`** collection holds learnings RAGDoll builds from how its collections are used. It replaces the old `memory` collection and is searched by every query by default (API: `include_insights`, MCP: `include_insights`; both default to `true`). When other collections are searched too, at most `RAGDOLL_INSIGHTS_MAX_RESULTS` insight chunks (default `5`, `0` = no cap) are returned so insights don't crowd out documents.
+
+- **What an insight holds:** a statement and optional rationale (both embedded), the question it answers, topic, tags, open questions, confidence, and an origin: `stew` (generated from query history), `chat` or `asserted` (from a person), or `agent` (submitted over MCP). Lineage records the chunks, queries, and other insights it came from, and every change is kept as a revision.
+- **Never hard-deleted:** retiring an insight removes it from search but keeps it and the reason, so it isn't regenerated later. Insights changed by a person are pinned so automated runs leave them alone.
+- **Managing insights:** they can't be edited as chunks in the review app (that would bypass their revision history). Use the CLI:
+  ```bash
+  ragdoll insights list                 # --status active|retired|superseded|all, --origin agent, -n 50
+  ragdoll insights show 12              # statement, rationale, lineage, revisions
+  ragdoll insights retire 12 --reason "Contradicted by the 2026 handbook"
+  ragdoll insights restore 12
+  ```
+- **Migrating from memory:** deploy, restart the RAGDoll services, then run `ragdoll insights migrate-memory` (try `--dry-run` first). Each memory becomes an `agent` insight and `{DATA_DIR}/memory/` is moved to `{DATA_DIR}/_archive/`. Re-running skips memories already migrated.
+
+**Query log:** every API and MCP query is recorded in `{DATA_DIR}/_querylog/querylog.db` with its expanded query, embedding, and top hits (with text snapshots). It is the input for insight generation and is never listed as a collection. `ragdoll queries` lists recent queries; `ragdoll queries 42` shows one with its hits.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RAGDOLL_INSIGHTS_MAX_RESULTS` | `5` | Max insight chunks per query when other collections are searched too (`0` = no cap) |
+| `RAGDOLL_QUERY_LOG` | `true` | Log API/MCP queries and their top hits |
+| `RAGDOLL_QUERY_LOG_HISTORY` | `false` | Also store the caller's conversation history with each logged query |
+| `RAGDOLL_QUERY_LOG_TOP_K` | `10` | Hits stored per logged query |
 
 ## Review web app
 

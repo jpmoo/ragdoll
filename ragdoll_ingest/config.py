@@ -104,6 +104,17 @@ QUERY_MODEL = get_env("RAGDOLL_QUERY_MODEL") or "llama3.2:3b"
 # Default minimum cosine similarity for /query and MCP query_rag (0.0–1.0). Lower = more results.
 QUERY_THRESHOLD = float(get_env("RAGDOLL_QUERY_THRESHOLD") or "0.45")
 
+# Insights (default collection of learnings; replaces the old memory collection)
+# Max insight chunks in one query's results when other collections are searched too. 0 = no cap.
+INSIGHTS_MAX_RESULTS = int(get_env("RAGDOLL_INSIGHTS_MAX_RESULTS") or "5")
+
+# Query log: API/MCP queries and the chunks they returned (input for insights). {DATA_DIR}/_querylog/querylog.db
+QUERY_LOG_ENABLED = (get_env("RAGDOLL_QUERY_LOG") or "true").lower() in ("true", "1", "yes")
+# Also store the caller's conversation history with each logged query
+QUERY_LOG_HISTORY = (get_env("RAGDOLL_QUERY_LOG_HISTORY") or "false").lower() in ("true", "1", "yes")
+# Hits stored per logged query
+QUERY_LOG_TOP_K = int(get_env("RAGDOLL_QUERY_LOG_TOP_K") or "10")
+
 # API server
 API_PORT = int(get_env("RAGDOLL_API_PORT") or "9042")
 

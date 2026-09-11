@@ -15,7 +15,8 @@ from pydantic import BaseModel
 from . import config
 from .embedder import embed
 from .interpreters import CHUNK_ROLES
-from .memory import MEMORY_GROUP, parse_memory_summary
+from .insights import INSIGHTS_GROUP, get_insights_by_source_paths
+from .query_log import log_query
 from .storage import _connect, _list_sync_groups, clean_text, get_source_summary_by_path, init_db
 from .config import get_group_paths, _sanitize_group
 
@@ -32,6 +33,7 @@ class QueryRequest(BaseModel):
     limit_chunk_role: bool = False  # If true, use LLM to infer up to 2 roles from prompt+history and limit retrieval to those
     synthesize: bool = False  # If true, LLM synthesizes prompt+history+RAG into instructions or answer
     synthesis_mode: str = "instructions"  # "instructions" (for an assistant) or "answer" (direct summary)
+    include_insights: bool = True  # Also search the insights collection when group is set; false leaves it out of search-all
 
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
@@ -208,16 +210,16 @@ def _run_retrieval(
     role_filter: list[str] | None,
 ) -> list[dict[str, Any]]:
     """Run similarity retrieval over groups with optional chunk_role filter. Returns sorted results.
-    role_filter uses document CHUNK_ROLES (description, application, implication); the memory group
-    uses different roles (conclusion, reasoning, open_threads, full) so we never apply role_filter to it.
+    role_filter uses document CHUNK_ROLES (description, application, implication); the insights group
+    uses different roles (statement, rationale) so we never apply role_filter to it.
     """
     results: list[dict[str, Any]] = []
     for group_name in groups:
         conn = _connect(group_name)
         try:
             init_db(conn)
-            # Apply role filter only to non-memory groups (memory uses conclusion/reasoning/open_threads/full)
-            use_role_filter = role_filter and group_name != MEMORY_GROUP
+            # Apply role filter only to document groups (insights use statement/rationale)
+            use_role_filter = role_filter and group_name != INSIGHTS_GROUP
             if use_role_filter:
                 placeholders = ",".join("?" * len(role_filter))
                 where = f" WHERE c.chunk_role IN ({placeholders})"
@@ -226,7 +228,7 @@ def _run_retrieval(
             params: tuple = tuple(role_filter) if use_role_filter else ()
             try:
                 sql = (
-                    "SELECT c.source_path, c.source_type, c.chunk_index, c.text, c.embedding, "
+                    "SELECT c.id AS chunk_id, c.source_path, c.source_type, c.chunk_index, c.text, c.embedding, "
                     "c.artifact_type, c.artifact_path, c.page, s.display_title, "
                     "c.primary_question_answered, c.chunk_role "
                     "FROM chunks c "
@@ -235,7 +237,7 @@ def _run_retrieval(
                 rows = conn.execute(sql, params).fetchall()
             except Exception:
                 sql = (
-                    "SELECT c.source_path, c.source_type, c.chunk_index, c.text, c.embedding, "
+                    "SELECT c.id AS chunk_id, c.source_path, c.source_type, c.chunk_index, c.text, c.embedding, "
                     "c.artifact_type, c.artifact_path, c.page, s.display_title, c.chunk_role "
                     "FROM chunks c "
                     "LEFT JOIN sources s ON s.source_path = c.source_path" + where
@@ -255,8 +257,8 @@ def _run_retrieval(
                         raw_title = raw_title.strip() or None
                     source_name = raw_title or path_basename
                     fetch_url = None
-                    # Memory group has no on-disk source files; skip fetch URL to avoid 404
-                    if group_name != MEMORY_GROUP:
+                    # Insights have no on-disk source files; skip fetch URL to avoid 404
+                    if group_name != INSIGHTS_GROUP:
                         gp = get_group_paths(group_name)
                         try:
                             full_source_path = Path(source_path)
@@ -292,6 +294,7 @@ def _run_retrieval(
                         "source_type": row["source_type"],
                         "source_name": source_name,
                         "source_url": fetch_url,
+                        "chunk_id": row["chunk_id"],
                         "chunk_index": row["chunk_index"],
                         "text": clean_text(row["text"]),
                         "primary_question_answered": pq,
@@ -335,14 +338,13 @@ def _enrich_results_with_summary_and_context_index(
         r["source_summary"] = key_to_summary.get(k)
         r["context_index"] = key_to_index[k]
         r["context_total"] = key_to_count[k]
-    # For memory group, parse summary JSON and attach topic, date, tags to each result
-    for r in results:
-        if r.get("group") == MEMORY_GROUP and r.get("source_summary"):
-            meta = parse_memory_summary(r["source_summary"])
-            if meta:
-                r["memory_topic"] = meta.get("topic") or ""
-                r["memory_date"] = meta.get("date") or ""
-                r["memory_tags"] = meta.get("tags") or []
+    # For insights, attach the insight's metadata (id, topic, tags, origin, confidence, ...) to each result
+    insight_paths = [r["source_path"] for r in results if r["group"] == INSIGHTS_GROUP]
+    if insight_paths:
+        by_path = get_insights_by_source_paths(insight_paths)
+        for r in results:
+            if r["group"] == INSIGHTS_GROUP:
+                r["insight"] = by_path.get(r["source_path"])
     return results
 
 
@@ -376,10 +378,8 @@ def _group_results_by_document(results: list[dict[str, Any]]) -> list[dict[str, 
             "samples": samples,
             "sample_count": len(samples),
         }
-        if group_name == MEMORY_GROUP:
-            doc_entry["memory_topic"] = first.get("memory_topic", "")
-            doc_entry["memory_date"] = first.get("memory_date", "")
-            doc_entry["memory_tags"] = first.get("memory_tags", [])
+        if group_name == INSIGHTS_GROUP:
+            doc_entry["insight"] = first.get("insight")
         out.append(doc_entry)
     return out
 
@@ -448,6 +448,21 @@ def _synthesize_rag_results(
         return f"(Synthesis failed: {e})"
 
 
+def _cap_insight_results(results: list[dict[str, Any]], max_insights: int) -> list[dict[str, Any]]:
+    """Keep only the top max_insights insight chunks (results are sorted by similarity). 0 = no cap."""
+    if max_insights <= 0:
+        return results
+    kept: list[dict[str, Any]] = []
+    n_insights = 0
+    for r in results:
+        if r["group"] == INSIGHTS_GROUP:
+            if n_insights >= max_insights:
+                continue
+            n_insights += 1
+        kept.append(r)
+    return kept
+
+
 def _do_query(
     prompt: str,
     history: str | None,
@@ -456,6 +471,8 @@ def _do_query(
     limit_chunk_role: bool = False,
     synthesize: bool = False,
     synthesis_mode: str = "instructions",
+    include_insights: bool = True,
+    log_as: str | None = None,
 ) -> dict[str, Any]:
     """Shared query logic for GET and POST endpoints.
     
@@ -468,6 +485,10 @@ def _do_query(
         limit_chunk_role: If true, infer up to 2 chunk roles from prompt+history via LLM and limit retrieval to those.
         synthesize: If true, call LLM to synthesize prompt + history + top chunks into instructions or an answer.
         synthesis_mode: "instructions" (for an assistant) or "answer" (direct summary).
+        include_insights: If true, the insights collection is searched even when group names other collections.
+                          If false, it is left out of search-all (it is still searched if named in group).
+        log_as: Transport name ("api", "mcp") to record the query in the query log; None skips logging
+                (use None for RAGDoll's own internal queries).
     """
     # Optionally infer chunk roles from user input (prompt + context); uses current CHUNK_ROLES (description, application, implication)
     role_filter: list[str] | None = None
@@ -499,8 +520,12 @@ def _do_query(
                 detail=f"Collection(s) not found: {missing}. Available: {all_groups}",
             )
         groups = list(group)
-    else:
+        if include_insights and INSIGHTS_GROUP in all_groups and INSIGHTS_GROUP not in groups:
+            groups.append(INSIGHTS_GROUP)
+    elif include_insights:
         groups = all_groups
+    else:
+        groups = [g for g in all_groups if g != INSIGHTS_GROUP]
 
     # Run retrieval (with optional role filter)
     all_results = _run_retrieval(groups, query_emb, threshold, role_filter)
@@ -514,6 +539,16 @@ def _do_query(
         )
         all_results = _run_retrieval(groups, query_emb, threshold, None)
         role_filter_relaxed = True
+
+    # Keep insights from crowding out document chunks when other collections are searched too
+    if len(groups) > 1:
+        all_results = _cap_insight_results(all_results, config.INSIGHTS_MAX_RESULTS)
+
+    if log_as:
+        log_query(
+            transport=log_as, prompt=prompt, expanded_query=expanded, history=history, groups=groups,
+            threshold=threshold, embedding=query_emb, results=all_results,
+        )
 
     # Enrich results with document summary and context numbering (1 of X, 2 of X per source)
     all_results = _enrich_results_with_summary_and_context_index(all_results)
@@ -553,6 +588,7 @@ def query_rag_get(
     limit_chunk_role: bool = Query(False, description="If true, infer up to 2 chunk roles from prompt+context and limit retrieval to those"),
     synthesize: bool = Query(False, description="If true, LLM synthesizes prompt+history+RAG into instructions or answer"),
     synthesis_mode: str = Query("instructions", description="When synthesize=true: 'instructions' (for an assistant) or 'answer'"),
+    include_insights: bool = Query(True, description="Also search the insights collection when group is set; false leaves it out of search-all"),
 ) -> dict[str, Any]:
     """Query RAG collections via GET (simple URL format).
     
@@ -565,9 +601,13 @@ def query_rag_get(
     - limit_chunk_role: If true, use LLM to infer chunk roles from prompt+context and limit retrieval; false if absent.
     - synthesize: If true, RAGDoll uses its LLM to turn prompt+history+chunks into instructions or an answer (research-assistant style).
     - synthesis_mode: "instructions" or "answer".
+    - include_insights: Also search the insights collection when group is set (default true).
     """
     use_threshold = threshold if threshold is not None else config.QUERY_THRESHOLD
-    return _do_query(prompt, history, use_threshold, group, limit_chunk_role, synthesize, synthesis_mode)
+    return _do_query(
+        prompt, history, use_threshold, group, limit_chunk_role, synthesize, synthesis_mode,
+        include_insights=include_insights, log_as="api",
+    )
 
 
 @app.post("/query")
@@ -584,10 +624,12 @@ def query_rag(request: QueryRequest) -> dict[str, Any]:
     - limit_chunk_role: If true, use LLM to infer up to 2 chunk roles from prompt+context and limit retrieval; false if absent.
     - synthesize: If true, LLM synthesizes prompt+history+RAG into instructions or answer.
     - synthesis_mode: "instructions" or "answer".
+    - include_insights: Also search the insights collection when group is set (default true).
     """
     return _do_query(
         request.prompt, request.history, request.threshold, request.group,
         request.limit_chunk_role, request.synthesize, request.synthesis_mode,
+        include_insights=request.include_insights, log_as="api",
     )
 
 

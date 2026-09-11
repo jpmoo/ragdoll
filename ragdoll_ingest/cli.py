@@ -8,6 +8,17 @@ from pathlib import Path
 from . import config
 from .chunk_csv import CHUNK_CSV_HEADERS
 from .csv_import import parse_csv_bytes, run_csv_import
+from .insights import (
+    INSIGHTS_GROUP,
+    ORIGINS,
+    InsightError,
+    get_insight,
+    list_insights,
+    migrate_memory_collection,
+    restore_insight,
+    retire_insight,
+)
+from .query_log import get_query, recent_queries
 from .storage import (
     _connect,
     _list_sync_groups,
@@ -210,6 +221,118 @@ def cmd_reprocess(args: argparse.Namespace) -> int:
     return 1
 
 
+def _truncate(text: str, width: int) -> str:
+    return text if len(text) <= width else text[: width - 3] + "..."
+
+
+def _print_insight(i: dict) -> None:
+    flags = f"{i['status']}, origin {i['origin']}, version {i['version']}" + (", pinned" if i["pinned"] else "")
+    print(f"Insight {i['id']} ({flags})")
+    if i["status"] != "active":
+        superseded = f" (superseded by {i['superseded_by']})" if i["superseded_by"] else ""
+        print(f"  Reason: {i['status_reason']}{superseded}")
+    for label, key in (
+        ("Topic", "topic"), ("Question", "question"), ("Statement", "statement"),
+        ("Rationale", "rationale"), ("Open questions", "open_questions"),
+    ):
+        if i.get(key):
+            print(f"\n{label}:\n  {i[key]}")
+    print()
+    if i["tags"]:
+        print(f"Tags: {', '.join(i['tags'])}")
+    if i["confidence"] is not None:
+        print(f"Confidence: {i['confidence']}")
+    run = f"  Run: {i['run_id']}" if i["run_id"] else ""
+    print(f"Created: {i['created_at']}  Updated: {i['updated_at']}{run}")
+    if i["lineage"]:
+        print(f"\nLineage ({len(i['lineage'])}):")
+        for entry in i["lineage"]:
+            if entry["ref_source_path"]:
+                ref = f"{entry['ref_group']}: {Path(entry['ref_source_path']).name}#{entry['ref_chunk_index']}"
+            elif entry["ref_query_id"]:
+                ref = f"query {entry['ref_query_id']}"
+            else:
+                ref = f"insight {entry['ref_insight_id']}"
+            print(f"  - {entry['kind']} ({entry['relation'] or 'related'}): {ref}")
+    print(f"\nRevisions ({len(i['revisions'])}):")
+    for r in i["revisions"]:
+        print(f"  {r['ts']}  {r['actor']:<9} {r['action']:<9} {r['reason'] or ''}")
+
+
+def cmd_insights(args: argparse.Namespace) -> int:
+    """List, show, retire, or restore insights; migrate the legacy memory collection."""
+    try:
+        if args.insights_command == "list":
+            rows = list_insights(
+                status=None if args.status == "all" else args.status, origin=args.origin, limit=args.limit
+            )
+            if not rows:
+                print("No insights found.")
+                return 0
+            print(f"{'ID':<6} {'Status':<11} {'Origin':<9} {'Updated (UTC)':<20} Statement")
+            print("-" * 100)
+            for i in rows:
+                print(f"{i['id']:<6} {i['status']:<11} {i['origin']:<9} {i['updated_at']:<20} {_truncate(i['statement'], 52)}")
+            return 0
+        if args.insights_command == "show":
+            _print_insight(get_insight(args.insight_id))
+            return 0
+        if args.insights_command == "retire":
+            retire_insight(args.insight_id, actor="user", reason=args.reason)
+            print(f"Retired insight {args.insight_id}. It is no longer searchable; 'ragdoll insights restore {args.insight_id}' undoes this.")
+            return 0
+        if args.insights_command == "restore":
+            restore_insight(args.insight_id, actor="user", reason=args.reason)
+            print(f"Restored insight {args.insight_id}.")
+            return 0
+        if args.insights_command == "migrate-memory":
+            r = migrate_memory_collection(archive=not args.no_archive, dry_run=args.dry_run)
+            if r["found"] == 0:
+                print("No memory collection found; nothing to migrate.")
+                return 0
+            verb = "Would migrate" if args.dry_run else "Migrated"
+            print(f"{verb} {r['migrated']} of {r['found']} memories into insights.")
+            if r["skipped_existing"]:
+                print(f"Skipped {r['skipped_existing']} already migrated.")
+            if r["skipped_empty"]:
+                print(f"Skipped {r['skipped_empty']} with no content.")
+            if r["archived_to"]:
+                print(f"Moved the memory collection to {r['archived_to']}")
+            return 0
+    except InsightError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    return 1
+
+
+def cmd_queries(args: argparse.Namespace) -> int:
+    """List recently logged queries, or show one with its hits."""
+    if args.query_id is not None:
+        q = get_query(args.query_id)
+        if not q:
+            print(f"Error: Query {args.query_id} not found.", file=sys.stderr)
+            return 1
+        print(f"Query {q['id']}  {q['ts']} UTC  via {q['transport']}")
+        print(f"  Prompt:      {q['prompt']}")
+        print(f"  Expanded:    {q['expanded_query']}")
+        print(f"  Collections: {', '.join(q['collections'])}  (threshold {q['threshold']}, {q['result_count']} results)")
+        for h in q["hits"]:
+            # Insight paths ("insight/12") read better whole; document paths by filename
+            name = h["source_path"] if h["group_name"] == INSIGHTS_GROUP else Path(h["source_path"]).name
+            print(f"  {h['rank']:>3}. {h['similarity']:.3f}  {h['group_name']}  {name}#{h['chunk_index']}")
+        return 0
+    rows = recent_queries(args.limit)
+    if not rows:
+        print("No queries logged.")
+        return 0
+    print(f"{'ID':<6} {'When (UTC)':<20} {'Via':<5} {'Hits':<6} {'Top':<6} Prompt")
+    print("-" * 100)
+    for q in rows:
+        top = f"{q['top_similarity']:.3f}" if q["top_similarity"] is not None else "-"
+        print(f"{q['id']:<6} {q['ts']:<20} {q['transport']:<5} {q['result_count']:<6} {top:<6} {_truncate(q['prompt'], 55)}")
+    return 0
+
+
 def main() -> int:
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -300,6 +423,42 @@ def main() -> int:
         help="If a source_path already exists, delete its chunks and re-import.",
     )
 
+    # insights command
+    insights_parser = subparsers.add_parser(
+        "insights",
+        help="List, show, retire, or restore insights",
+        description="Manage the insights collection. Retired insights are kept (with the reason) but no longer searched.",
+    )
+    insights_sub = insights_parser.add_subparsers(dest="insights_command", required=True)
+    insights_list = insights_sub.add_parser("list", help="List insights, newest-updated first")
+    insights_list.add_argument("--status", choices=["active", "retired", "superseded", "all"], default="active")
+    insights_list.add_argument("--origin", choices=list(ORIGINS))
+    insights_list.add_argument("-n", "--limit", type=int, default=50)
+    insights_show = insights_sub.add_parser("show", help="Show an insight with its lineage and revisions")
+    insights_show.add_argument("insight_id", type=int)
+    insights_retire = insights_sub.add_parser("retire", help="Stop an insight from being searched (kept, not deleted)")
+    insights_retire.add_argument("insight_id", type=int)
+    insights_retire.add_argument("--reason", required=True, help="Why it's being retired; kept so it isn't regenerated")
+    insights_restore = insights_sub.add_parser("restore", help="Make a retired or superseded insight searchable again")
+    insights_restore.add_argument("insight_id", type=int)
+    insights_restore.add_argument("--reason")
+    insights_migrate = insights_sub.add_parser(
+        "migrate-memory",
+        help="Copy the legacy memory collection into insights, then archive it",
+        description="Each memory becomes an 'agent' insight. Safe to re-run; already-migrated memories are skipped.",
+    )
+    insights_migrate.add_argument("--dry-run", action="store_true", help="Report what would be migrated without writing")
+    insights_migrate.add_argument("--no-archive", action="store_true", help="Leave the memory collection in place")
+
+    # queries command
+    queries_parser = subparsers.add_parser(
+        "queries",
+        help="Show logged queries",
+        description="List recent API/MCP queries from the query log, or show one query with the chunks it returned.",
+    )
+    queries_parser.add_argument("query_id", nargs="?", type=int, help="Query ID to show in detail")
+    queries_parser.add_argument("-n", "--limit", type=int, default=20)
+
     args = parser.parse_args()
     
     # Route to command handler
@@ -313,6 +472,10 @@ def main() -> int:
         return cmd_reprocess(args)
     elif args.command == "import-csv":
         return cmd_import_csv(args)
+    elif args.command == "insights":
+        return cmd_insights(args)
+    elif args.command == "queries":
+        return cmd_queries(args)
     else:
         parser.print_help()
         return 1

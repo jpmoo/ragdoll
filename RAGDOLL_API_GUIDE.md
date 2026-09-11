@@ -6,7 +6,7 @@ This guide explains how to integrate your chatbot or application with RAGDoll's 
 
 RAGDoll provides an HTTP API server (default port `9042`) that enables:
 - **Semantic search** across ingested documents using natural language queries
-- **Collection management** to discover available document collections (including the optional **`memory`** collection when it exists; memories are written via MCP `write_memory`, not the HTTP API)
+- **Collection management** to discover available document collections, including the **`insights`** collection, which is searched by default (see "Insights collection" in §4)
 - **Query expansion** via LLM to improve search accuracy
 - **Flexible querying** across all collections or specific ones (repeat `group` on GET, or JSON array on POST)
 - **Optional synthesis** (`synthesize`) and **role-limited retrieval** (`limit_chunk_role`); see §3
@@ -143,14 +143,15 @@ curl "http://localhost:9042/query?prompt=What%20is%20double-loop%20learning&grou
 
 **Query multiple collections** (repeat `group`):
 ```bash
-curl "http://localhost:9042/query?prompt=...&group=edleadership&group=memory"
+curl "http://localhost:9042/query?prompt=...&group=edleadership&group=research"
 ```
 
 **Parameters:**
 - `prompt` (required): Your natural language query/question
 - `history` (optional): Previous conversation context for better query expansion
 - `threshold` (optional): Minimum similarity score (0.0–1.0). Lower = more results, higher = more precise. **If omitted**, the server uses **`RAGDOLL_QUERY_THRESHOLD`** from environment / `env.ragdoll`, or **`0.45`**.
-- `group` (optional): One or more collection names; repeat the query parameter (`?group=a&group=b`). If absent, searches **all** collections (including `memory` when that collection exists)
+- `group` (optional): One or more collection names; repeat the query parameter (`?group=a&group=b`). If absent, searches **all** collections. The **`insights`** collection is added even when `group` is set, unless `include_insights=false`
+- `include_insights` (optional, default: true): Search the `insights` collection alongside the named collections. Set to false to leave insights out, including from search-all; naming `insights` in `group` still searches it.
 - `limit_chunk_role` (optional, default: false): If true, the server runs your prompt and context through an LLM to infer up to two chunk roles (from the same roles used at ingest), then limits retrieval to chunks matching those roles. If false or absent, retrieval is not limited by role.
 - `synthesize` (optional, default: false): If true, after retrieval the server uses the same LLM (query model) to turn prompt+history+top chunks into **instructions for an assistant** or a **direct answer**, so the API can act as a research assistant. The response includes a `synthesis` field.
 - `synthesis_mode` (optional, default: "instructions"): When `synthesize=true`, use `"instructions"` (summarize context into instructions for the caller) or `"answer"` (produce a direct answer from the passages).
@@ -325,10 +326,11 @@ Each result in the `results` array contains:
   - `"figure_summary"`: LLM summary of a figure/diagram
 - **`artifact_path`**: Path to stored artifact (image/JSON) if applicable, `null` for text
 - **`page`**: Page number (for PDFs), `null` for non-paginated documents
-- **`chunk_role`**: For document chunks: role from ingest (e.g. `description`, `application`, `implication`), or `null`. For **memory** chunks: `conclusion`, `reasoning`, `open_threads`, or `full`.
+- **`chunk_role`**: For document chunks: role from ingest (e.g. `description`, `application`, `implication`), or `null`. For **insights** chunks: `statement` or `rationale`.
+- **`chunk_id`**: Database id of the chunk within its collection
 - **`similarity`**: Cosine similarity score (0.0-1.0), higher = more relevant
-- **`memory_topic`**, **`memory_date`**, **`memory_tags`**: Present when **`group`** is **`memory`** (and summary JSON parses); empty string / `[]` if missing
-- **`primary_question_answered`**: May be set on document chunks from ingest; typically unused for memory
+- **`insight`**: Present when **`group`** is **`insights`**: `{id, topic, tags, question, origin, status, confidence, pinned, created_at, updated_at}`
+- **`primary_question_answered`**: May be set on document chunks from ingest; for insights, the question the insight answers
 
 **Presenting results:** Prefer the **`documents`** array for a document-first UX. For each document, show its summary and metadata, then list its samples with labels like *"Sample 1 of 3"*, *"Sample 2 of 3"* using each sample’s `context_index` and `context_total`. Documents are ordered by relevance (best similarity in that document). If you use the flat **`results`** list instead, group by `(group, source_path)` and use `source_summary`, `context_index`, and `context_total` on each result for the same labels.
 
@@ -342,16 +344,19 @@ When `synthesize` was true, the response also includes:
 
 If no chunks matched the inferred roles (e.g. most chunks have no role set), the server falls back to unfiltered retrieval and adds **`role_filter_relaxed`**: `true` and **`inferred_roles`** so you still get results and know the filter was relaxed.
 
-### Memory collection (`group` = `memory`)
+### Insights collection (`group` = `insights`)
 
-When the **`memory`** collection exists (created after at least one MCP `write_memory` call), it is included in **search-all** queries the same as document collections. You can also target it with `group=memory` (GET) or `"group": ["memory"]` (POST).
+The **`insights`** collection holds learnings RAGDoll builds from how its collections are used (it replaces the old `memory` collection). Once it exists, every query searches it: search-all includes it, and it is added to an explicit `group` list unless **`include_insights=false`**.
 
-- **Result metadata:** Each hit from `memory` may include **`memory_topic`**, **`memory_date`**, and **`memory_tags`** (parsed from the stored memory). Document-level entries in **`documents`** may include the same fields on the block.
-- **`chunk_role`:** For memory chunks, values are **`conclusion`**, **`reasoning`**, **`open_threads`**, or **`full`** (not the document ingest roles `description` / `application` / `implication`).
-- **`source_url`:** Usually **`null`** for memory (there is no file to fetch).
-- **`limit_chunk_role`:** Role filtering applies only to **document** collections; the **`memory`** group is always searched without that filter so memories are not excluded.
+- **Result metadata:** Each hit from `insights` includes an **`insight`** object: `{id, topic, tags, question, origin, status, confidence, pinned, created_at, updated_at}`. `origin` is `stew` (generated from query history), `chat` or `asserted` (from a person), or `agent` (submitted over MCP). Document-level entries in **`documents`** carry the same object.
+- **`chunk_role`:** **`statement`** (the insight itself) or **`rationale`** (why it holds), not the document ingest roles.
+- **`source_url`:** Always **`null`** (there is no file to fetch).
+- **`limit_chunk_role`:** Role filtering applies only to **document** collections; insights are never filtered out by it.
+- **Result cap:** When other collections are searched too, at most `RAGDOLL_INSIGHTS_MAX_RESULTS` insight chunks (default 5) are returned.
 
-**Writing memories** is **not** available on the HTTP API; use the MCP tool **`write_memory`**.
+**Query log:** every `/query` call is recorded (prompt, expanded query, embedding, top hits) in `{DATA_DIR}/_querylog/querylog.db` as input for insight generation. Conversation `history` is not stored unless `RAGDOLL_QUERY_LOG_HISTORY=true`; set `RAGDOLL_QUERY_LOG=false` to disable logging.
+
+**Adding insights** is **not** available on the HTTP API; use the MCP tool **`submit_insight`**.
 
 ---
 
@@ -799,8 +804,9 @@ Other paths (`RAGDOLL_INGEST_PATH`, `RAGDOLL_OUTPUT_PATH`, Ollama host/model, et
 | `prompt` | string | Yes | - | Natural language query |
 | `history` | string | No | null | Conversation context for query expansion |
 | `threshold` | float | No | `RAGDOLL_QUERY_THRESHOLD` or `0.45` | Minimum cosine similarity (0.0–1.0). Omit on GET to use server default. |
-| `group` | string[] | No | null | One or more collections. GET: repeat `?group=a&group=b`. POST: JSON array, e.g. `["edleadership"]` or `["a","memory"]`. Omit to search all (including `memory` if present). |
-| `limit_chunk_role` | boolean | No | false | Infer ingest chunk roles and filter document chunks; **memory** group is never filtered this way. |
+| `group` | string[] | No | null | One or more collections. GET: repeat `?group=a&group=b`. POST: JSON array, e.g. `["edleadership"]` or `["a","b"]`. Omit to search all. |
+| `include_insights` | boolean | No | true | Also search the `insights` collection when `group` is set; false leaves it out of search-all. |
+| `limit_chunk_role` | boolean | No | false | Infer ingest chunk roles and filter document chunks; the **insights** group is never filtered this way. |
 | `synthesize` | boolean | No | false | If true, LLM produces `synthesis` from top chunks. |
 | `synthesis_mode` | string | No | `"instructions"` | With `synthesize`: `"instructions"` or `"answer"`. |
 
@@ -810,15 +816,14 @@ Other paths (`RAGDOLL_INGEST_PATH`, `RAGDOLL_OUTPUT_PATH`, Ollama host/model, et
 |-------|------|-------------|
 | `text` | string | Chunk text content |
 | `similarity` | float | Relevance score (0.0–1.0) |
-| `source_name` | string | Source filename or memory pseudo-path segment |
-| `source_url` | string / null | `/fetch/...` for files; **null** for memory |
-| `group` | string | Collection name (`memory` for memories) |
-| `page` | int / null | Page number (PDFs); often null for memory |
+| `source_name` | string | Source filename, or the topic for insights |
+| `source_url` | string / null | `/fetch/...` for files; **null** for insights |
+| `group` | string | Collection name (`insights` for insights) |
+| `chunk_id` | int | Chunk id within its collection |
+| `page` | int / null | Page number (PDFs); null for insights |
 | `artifact_type` | string | Content type (e.g. `text`, chart/table/figure summaries) |
-| `chunk_role` | string / null | Document: `description` / `application` / `implication`. Memory: `conclusion` / `reasoning` / `open_threads` / `full`. |
-| `memory_topic` | string | Memory collection only (when set) |
-| `memory_date` | string | Memory collection only (when set) |
-| `memory_tags` | array | Memory collection only (when set) |
+| `chunk_role` | string / null | Document: `description` / `application` / `implication`. Insights: `statement` / `rationale`. |
+| `insight` | object | Insights collection only: `id`, `topic`, `tags`, `question`, `origin`, `status`, `confidence`, `pinned`, `created_at`, `updated_at` |
 
 ---
 
