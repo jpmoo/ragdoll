@@ -34,6 +34,21 @@ def _compact_query_result(result: dict) -> dict:
     ]
     return out
 
+
+def _limit_per_document(results: list[dict], max_per_document: int) -> list[dict]:
+    """Keep at most max_per_document chunks from each source (results are sorted by similarity). 0 = no limit."""
+    if max_per_document <= 0:
+        return results
+    counts: dict[tuple[str, str], int] = {}
+    kept = []
+    for r in results:
+        k = (r["group"], r["source_path"])
+        if counts.get(k, 0) < max_per_document:
+            counts[k] = counts.get(k, 0) + 1
+            kept.append(r)
+    return kept
+
+
 try:
     from mcp.server.fastmcp import FastMCP
     from mcp.server.transport_security import TransportSecuritySettings
@@ -77,6 +92,7 @@ def _make_mcp() -> "FastMCP":
         collections: list[str] | None = None,
         limit_chunk_role: bool = False,
         max_results: int = 20,
+        max_per_document: int = 3,
         synthesize: bool = False,
         synthesis_mode: str = "instructions",
         include_insights: bool = True,
@@ -96,6 +112,7 @@ def _make_mcp() -> "FastMCP":
             collections: Collection names to search. If omitted or empty, searches all collections.
             limit_chunk_role: When true, infer up to 2 chunk roles from the prompt and restrict retrieval to those roles.
             max_results: Maximum number of chunks to return. Default 20. Applies to both the flat results list and the grouped documents view (_total_matching reports how many matched).
+            max_per_document: Maximum chunks returned from any one document, applied before max_results so the slots spread across sources. Default 3; 0 = no limit.
             synthesize: When true, LLM synthesizes prompt+history+RAG into instructions for an assistant or a direct answer.
             synthesis_mode: "instructions" (default) = instructions for the caller to use; "answer" = direct summary/answer.
             include_insights: When true (default), the insights collection is searched too, even if collections names others. Insight documents carry an "insight" object (id, topic, tags, origin, confidence).
@@ -120,11 +137,11 @@ def _make_mcp() -> "FastMCP":
             logger.exception("query_rag failed")
             raise ValueError(f"Query failed: {e}") from e
 
-        # Cap results for large responses (spec: max_results parameter). Rebuild the documents view from the kept
-        # chunks too; otherwise it still carries every match (hundreds of chunks, megabytes of JSON).
+        # Cap results for large responses (spec: max_results), after limiting chunks per document so the slots spread
+        # across sources. Rebuild the documents view from the kept chunks too; otherwise it still carries every match.
         results = result.get("results") or []
-        if len(results) > max_results:
-            kept = results[:max_results]
+        kept = _limit_per_document(results, max_per_document)[:max_results]
+        if len(kept) < len(results):
             _number_context(kept)
             result = dict(result)
             result["results"] = kept
