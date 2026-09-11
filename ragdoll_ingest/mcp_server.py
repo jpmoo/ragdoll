@@ -9,7 +9,7 @@ from fastapi import HTTPException
 
 from . import config
 from .api import _do_query
-from .memory import parse_memory_text, store_memory
+from .insights import submit_insight_text
 from .storage import _connect, _list_sync_groups, init_db, list_sources
 
 logger = logging.getLogger(__name__)
@@ -32,9 +32,10 @@ def _make_mcp() -> "FastMCP":
     mcp = FastMCP(
         name="ragdoll",
         instructions=(
-            "RAGDoll gives you semantic search over ingested document collections and a dedicated memory collection. "
-            "Use list_collections to discover collections. Use query_rag to search (when no collections are specified, the memory collection is included). "
-            "Use write_memory to store a structured memory (Topic, Date, Tags, Conclusion, Reasoning, Open threads); memories are then searchable via query_rag."
+            "RAGDoll gives you semantic search over ingested document collections plus an insights collection: learnings built from how the collections are used. "
+            "Use list_collections to discover collections. Use query_rag to search; insights are included by default, even when you name specific collections "
+            "(set include_insights=false to leave them out). "
+            "Use submit_insight to contribute a learning (Topic, Tags, Insight, Question, Reasoning, Open questions, Confidence); it is searchable immediately via query_rag."
         ),
         host=config.MCP_HOST,
         port=config.MCP_PORT,
@@ -58,6 +59,7 @@ def _make_mcp() -> "FastMCP":
         max_results: int = 20,
         synthesize: bool = False,
         synthesis_mode: str = "instructions",
+        include_insights: bool = True,
     ) -> dict:
         """Semantic similarity search over one or more RAGDoll document collections. Returns matching document chunks sorted by relevance.
         When synthesize=true, RAGDoll also uses its LLM to turn prompt+history+chunks into instructions or an answer (research-assistant style).
@@ -71,6 +73,7 @@ def _make_mcp() -> "FastMCP":
             max_results: Maximum number of chunks to return in the flat results list. Default 20. Does not cap the grouped documents view.
             synthesize: When true, LLM synthesizes prompt+history+RAG into instructions for an assistant or a direct answer.
             synthesis_mode: "instructions" (default) = instructions for the caller to use; "answer" = direct summary/answer.
+            include_insights: When true (default), the insights collection is searched too, even if collections names others. Insight hits carry an "insight" object (id, topic, tags, origin, confidence).
         """
         try:
             use_threshold = config.QUERY_THRESHOLD if threshold is None else threshold
@@ -83,6 +86,8 @@ def _make_mcp() -> "FastMCP":
                 limit_chunk_role,
                 synthesize,
                 synthesis_mode,
+                include_insights=include_insights,
+                log_as="mcp",
             )
         except HTTPException as e:
             raise ValueError(f"{e.detail}") from e
@@ -101,30 +106,37 @@ def _make_mcp() -> "FastMCP":
 
         return result
 
-    async def write_memory(content: str) -> dict:
-        """Write a structured memory to the RAGDoll memory collection (MCP-only). Memories are then included in query_rag when searching all collections.
+    async def submit_insight(content: str) -> dict:
+        """Add an insight to the RAGDoll insights collection (MCP-only). It is searchable via query_rag immediately.
 
-        Input format (plain text with these section headers):
-        - Topic: ...
-        - Date: YYYY-MM-DD
+        Use this for a durable learning: a conclusion worth finding again, with the reasoning behind it.
+
+        Input format (plain text with these section headers; only Insight is required):
+        - Topic: short title
         - Tags: comma-separated list
-        - Conclusion: ...
-        - Reasoning: ...
-        - Open threads: ...
+        - Insight: the learning itself, stated plainly (Conclusion also works)
+        - Question: the question this insight answers
+        - Reasoning: why it holds; evidence and how you got there
+        - Open questions: what's still unresolved (Open threads also works)
+        - Confidence: 0-1
 
-        The memory is stored with embeddings for each section and the full text, and will appear in semantic search results with memory_topic, memory_date, and memory_tags in the result metadata.
+        The statement and reasoning are embedded; results from the insights collection include an "insight" object with id, topic, tags, origin, and confidence.
         """
-        parsed = parse_memory_text(content)
-        if not parsed:
-            return {"ok": False, "error": "Could not parse memory: need at least Topic or one of Conclusion/Reasoning/Open threads"}
         try:
-            out = await asyncio.to_thread(store_memory, parsed)
-            return out
+            return await asyncio.to_thread(submit_insight_text, content)
         except Exception as e:
-            logger.exception("write_memory failed")
+            logger.exception("submit_insight failed")
             return {"ok": False, "error": str(e)}
 
-    # Register write_memory in the MCP tool manifest (must be callable so clients see it in tools/list)
+    async def write_memory(content: str) -> dict:
+        """Deprecated alias for submit_insight: the memory collection has been replaced by insights.
+
+        Accepts the old memory format (Topic, Date, Tags, Conclusion, Reasoning, Open threads); Conclusion becomes the insight.
+        """
+        return await submit_insight(content)
+
+    # Register in the MCP tool manifest (must be callable so clients see them in tools/list)
+    mcp.tool()(submit_insight)
     mcp.tool()(write_memory)
 
     # Optional resources (ragdoll://collections and ragdoll://collections/{group}/sources)

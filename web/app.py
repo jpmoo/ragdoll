@@ -21,6 +21,7 @@ from ragdoll_ingest.config import get_env
 from ragdoll_ingest.embedder import build_text_to_embed, embed
 from ragdoll_ingest.chunk_csv import CHUNK_CSV_HEADERS
 from ragdoll_ingest.csv_import import parse_csv_bytes, run_csv_import
+from ragdoll_ingest.insights import INSIGHTS_GROUP
 from ragdoll_ingest.interpreters import extract_chunk_semantic_labels
 from ragdoll_ingest.storage import (
     _connect,
@@ -133,6 +134,15 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
 app = FastAPI(title="RAGDoll Review", version="1.0.0")
 if REVIEW_USER and REVIEW_PASSWORD:
     app.add_middleware(BasicAuthMiddleware)
+
+
+def _reject_insights_edit(safe_group: str) -> None:
+    """Insights keep their own revision history; editing their chunks directly would bypass it."""
+    if safe_group == INSIGHTS_GROUP:
+        raise HTTPException(
+            status_code=400,
+            detail="Insights can't be edited as chunks. Use `ragdoll insights` (retire/restore) instead.",
+        )
 
 
 # --- API ---
@@ -288,6 +298,7 @@ class SourceSummaryUpdate(BaseModel):
 def api_update_source_summary(group: str, source_id: int, body: SourceSummaryUpdate):
     """Update the document summary for a source and re-embed all chunks in that document."""
     safe_group = config._sanitize_group(group)
+    _reject_insights_edit(safe_group)
     conn = _connect(safe_group)
     try:
         if get_source_by_id(conn, source_id) is None:
@@ -365,6 +376,7 @@ def _apply_exclude_from_ai_rewrite(
 def api_update_chunk(group: str, chunk_id: int, body: ChunkUpdate):
     """Update chunk text; re-run LLM for semantic labels (unless excluded per field) and re-embed."""
     safe_group = config._sanitize_group(group)
+    _reject_insights_edit(safe_group)
     conn = _connect(safe_group)
     try:
         row = get_chunk_by_id(conn, chunk_id)
@@ -441,6 +453,7 @@ def _join_chunk_with_neighbor(
 def api_join_chunk_above(group: str, chunk_id: int):
     """Merge the chunk above into this chunk (above text + this text), re-run semantic labels and embedding, delete the above chunk."""
     safe_group = config._sanitize_group(group)
+    _reject_insights_edit(safe_group)
     conn = _connect(safe_group)
     try:
         result = _join_chunk_with_neighbor(conn, safe_group, chunk_id, "above")
@@ -454,6 +467,7 @@ def api_join_chunk_above(group: str, chunk_id: int):
 def api_join_chunk_below(group: str, chunk_id: int):
     """Merge the chunk below into this chunk (this text + below text), re-run semantic labels and embedding, delete the below chunk."""
     safe_group = config._sanitize_group(group)
+    _reject_insights_edit(safe_group)
     conn = _connect(safe_group)
     try:
         result = _join_chunk_with_neighbor(conn, safe_group, chunk_id, "below")
@@ -467,6 +481,7 @@ def api_join_chunk_below(group: str, chunk_id: int):
 def api_create_chunk(group: str, source_id: int, body: ChunkCreate):
     """Insert a new chunk above or below an index, with optional semantic fields."""
     safe_group = config._sanitize_group(group)
+    _reject_insights_edit(safe_group)
     conn = _connect(safe_group)
     try:
         src = get_source_by_id(conn, source_id)
@@ -519,6 +534,7 @@ def api_create_chunk(group: str, source_id: int, body: ChunkCreate):
 def api_delete_chunk(group: str, chunk_id: int):
     """Delete a chunk and renumber following chunks."""
     safe_group = config._sanitize_group(group)
+    _reject_insights_edit(safe_group)
     conn = _connect(safe_group)
     try:
         row = get_chunk_by_id(conn, chunk_id)

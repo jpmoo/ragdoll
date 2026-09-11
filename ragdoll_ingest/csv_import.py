@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from . import config
 from .chunk_csv import CHUNK_CSV_HEADERS
 from .embedder import build_text_to_embed, embed
-from .memory import MEMORY_GROUP
+from .insights import INSIGHTS_GROUP
 from .storage import (
     _connect,
     _list_sync_groups,
@@ -132,8 +132,8 @@ def run_csv_import(
         raise ValueError("Collection name is required.")
 
     group = config._sanitize_group(name)
-    if group == MEMORY_GROUP:
-        raise ValueError("Do not import into the 'memory' collection; use MCP write_memory.")
+    if group == INSIGHTS_GROUP:
+        raise ValueError("Do not import into the 'insights' collection; use MCP submit_insight.")
 
     by_source: dict[tuple[str, str], list[dict[str, str]]] = defaultdict(list)
     for r in rows:
