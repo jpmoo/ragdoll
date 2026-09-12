@@ -60,7 +60,8 @@ def init_stew_db(conn: sqlite3.Connection) -> None:
             n_rejected INTEGER DEFAULT 0,
             reflection_path TEXT,
             status TEXT,
-            error TEXT
+            error TEXT,
+            last_query_ts TEXT
         );
 
         CREATE TABLE IF NOT EXISTS stew_clusters (
@@ -94,6 +95,12 @@ def init_stew_db(conn: sqlite3.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS ix_stew_candidates_run ON stew_candidates(run_id);
     """)
+    # Added after the first release
+    try:
+        conn.execute("ALTER TABLE stew_runs ADD COLUMN last_query_ts TEXT")
+    except sqlite3.OperationalError as e:
+        if "duplicate" not in str(e).lower():
+            raise
 
 
 def _now() -> str:
@@ -111,13 +118,21 @@ def _reflections_dir() -> Path:
     return d
 
 
-def _default_since(conn: sqlite3.Connection) -> str:
-    """Start from the last finished run, or STEW_LOOKBACK_DAYS ago if this is the first one."""
+def _watermark(conn: sqlite3.Connection) -> str | None:
+    """The last query a writing run actually processed, or None if there has not been one.
+
+    Only runs that wrote move the watermark: a dry run creates nothing, so the queries it looked at still need
+    stewing for real. Runs that found no queries leave the watermark where it was.
+    """
     row = conn.execute(
-        "SELECT started_at FROM stew_runs WHERE status = 'ok' ORDER BY started_at DESC LIMIT 1"
+        "SELECT last_query_ts FROM stew_runs "
+        "WHERE status = 'ok' AND dry_run = 0 AND last_query_ts IS NOT NULL "
+        "ORDER BY started_at DESC LIMIT 1"
     ).fetchone()
-    if row and row["started_at"]:
-        return row["started_at"]
+    return row["last_query_ts"] if row else None
+
+
+def _lookback_start() -> str:
     return (datetime.now(timezone.utc) - timedelta(days=config.STEW_LOOKBACK_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
 
 
@@ -524,7 +539,11 @@ def run_stew(
     conn = _connect_insights()
     try:
         init_stew_db(conn)
-        since = since or _default_since(conn)
+        # A caller-supplied --since is inclusive; continuing from the watermark is not, so the last query
+        # processed isn't stewed twice.
+        exclusive = since is None
+        if since is None:
+            since = _watermark(conn) or _lookback_start()
         conn.execute(
             "INSERT INTO stew_runs (run_id, started_at, model, dry_run, since, status) VALUES (?, ?, ?, ?, ?, 'running')",
             (run_id, started, model, int(not write), since),
@@ -534,13 +553,14 @@ def run_stew(
         conn.close()
 
     summary: dict[str, Any] = {
-        "run_id": run_id, "model": model, "dry_run": not write, "since": since,
+        "run_id": run_id, "model": model, "dry_run": not write, "since": since, "last_query_ts": None,
         "n_queries": 0, "clusters": [], "n_created": 0, "n_reinforced": 0, "n_rejected": 0, "n_candidates": 0,
         "gaps": [], "reflection_path": None, "status": "ok", "error": None,
     }
 
     try:
-        queries = queries_since(since)
+        queries = queries_since(since, exclusive=exclusive)
+        summary["last_query_ts"] = queries[-1]["ts"] if queries else None
         hits = hits_for_queries([q["id"] for q in queries])
         for q in queries:
             q["hits"] = hits.get(q["id"], [])
@@ -663,11 +683,12 @@ def _save_run(run_id: str, summary: dict[str, Any], finished: str) -> None:
         init_stew_db(conn)
         conn.execute(
             "UPDATE stew_runs SET finished_at = ?, n_queries = ?, n_clusters = ?, n_candidates = ?, n_created = ?, "
-            "n_reinforced = ?, n_rejected = ?, reflection_path = ?, status = ?, error = ? WHERE run_id = ?",
+            "n_reinforced = ?, n_rejected = ?, reflection_path = ?, status = ?, error = ?, last_query_ts = ? "
+            "WHERE run_id = ?",
             (
                 finished, summary["n_queries"], len(summary["clusters"]), summary["n_candidates"],
                 summary["n_created"], summary["n_reinforced"], summary["n_rejected"], summary["reflection_path"],
-                summary["status"], summary["error"], run_id,
+                summary["status"], summary["error"], summary.get("last_query_ts"), run_id,
             ),
         )
         for c in summary["clusters"]:

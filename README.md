@@ -420,7 +420,7 @@ ragdoll insights reflection stew-20260912T0300Z-1a2b
 
 What a run does:
 
-1. **Clusters** queries logged since the last run (each joins the cluster holding the most similar question; `RAGDOLL_STEW_CLUSTER_THRESHOLD`). Clusters with fewer than `RAGDOLL_STEW_MIN_QUERIES` questions are skipped.
+1. **Clusters** queries logged since the last *writing* run left off (dry runs don't consume queries, and a run that finds none leaves the mark where it was; the first run looks back `RAGDOLL_STEW_LOOKBACK_DAYS`). `--since TS` overrides that, which is how you re-stew the same window to compare models (each joins the cluster holding the most similar question; `RAGDOLL_STEW_CLUSTER_THRESHOLD`). Clusters with fewer than `RAGDOLL_STEW_MIN_QUERIES` questions are skipped.
 2. **Gathers the passages** those questions returned, from the query log's snapshots, so the evidence is what the asker actually saw.
 3. **Asks the model** for candidate insights, each citing the passages that support it, plus the alternatives it set aside and where the claim is thin.
 4. **Checks the grounding.** A candidate is rejected, with the reason recorded, if it cites a passage it wasn't shown, cites fewer than `RAGDOLL_STEW_MIN_SUPPORT` passages, or draws them from fewer than `RAGDOLL_STEW_MIN_SOURCES` different documents — an automatic insight should connect sources rather than restate one document RAGDoll already retrieves. Passage numbers are stripped from the text it keeps, so a stored insight reads on its own.

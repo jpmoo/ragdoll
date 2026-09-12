@@ -110,10 +110,16 @@ def log_query(
         return None
 
 
-def queries_since(since: str | None = None, limit: int | None = None) -> list[dict[str, Any]]:
-    """Logged queries from `since` (SQLite timestamp) onward, oldest first, with their embeddings.
+def queries_since(
+    since: str | None = None,
+    limit: int | None = None,
+    *,
+    exclusive: bool = False,
+) -> list[dict[str, Any]]:
+    """Logged queries from `since` onward (oldest first) with their embeddings.
 
-    This is the stew's input, so unlike recent_queries it keeps the embedding vector.
+    This is the stew's input, so unlike recent_queries it keeps the embedding vector. exclusive=True returns
+    queries strictly after `since`, which is what continuing from the last processed query needs.
     """
     conn = _connect_log()
     try:
@@ -123,7 +129,7 @@ def queries_since(since: str | None = None, limit: int | None = None) -> list[di
         )
         params: list[Any] = []
         if since:
-            sql += " WHERE ts >= ?"
+            sql += " WHERE ts > ?" if exclusive else " WHERE ts >= ?"
             params.append(since)
         sql += " ORDER BY id"
         if limit:
