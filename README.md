@@ -242,7 +242,7 @@ The API server listens on port `9042` by default (configurable via `RAGDOLL_API_
 
 ```bash
 sudo cp ragdoll-ingest.service ragdoll-api.service ragdoll-web.service /etc/systemd/system/
-# Optional: MCP server (requires pip install -e '.[mcp]' and RAGDOLL_MCP_TRANSPORT=sse in env.ragdoll)
+# Optional: MCP server (requires pip install -e '.[mcp]' and RAGDOLL_MCP_TRANSPORT=streamable-http or sse in env.ragdoll)
 # sudo cp ragdoll-mcp.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now ragdoll-ingest ragdoll-api ragdoll-web
@@ -319,20 +319,21 @@ pip install -e '.[mcp]'
 **Transport options:**
 
 - **stdio (default)** — The client spawns `ragdoll-mcp` as a subprocess; communication is over stdin/stdout. Use for local clients (e.g. Claude Desktop, Claude Code). No open port. Config via `RAGDOLL_ENV` or project-root `env.ragdoll`.
-- **SSE** — HTTP/SSE server for remote or multi-user use. Set `RAGDOLL_MCP_TRANSPORT=sse` in `env.ragdoll`. The server binds to `RAGDOLL_MCP_HOST` (default `127.0.0.1`) and `RAGDOLL_MCP_PORT` (default `9044`). Put behind a reverse proxy with auth if exposing externally.
+- **Streamable HTTP** (recommended for remote clients) — set `RAGDOLL_MCP_TRANSPORT=streamable-http`; the endpoint is `/mcp` (GET and POST).
+- **SSE** — older HTTP/SSE transport. Set `RAGDOLL_MCP_TRANSPORT=sse`; the app mounts at `/mcp`, so the stream is `/mcp/sse`. The server binds to `RAGDOLL_MCP_HOST` (default `127.0.0.1`) and `RAGDOLL_MCP_PORT` (default `9044`). Put behind a reverse proxy with auth if exposing externally.
 
 **Config in `env.ragdoll`:**
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `RAGDOLL_MCP_TRANSPORT` | `stdio` | `stdio` = local subprocess; `sse` = HTTP/SSE server |
+| `RAGDOLL_MCP_TRANSPORT` | `stdio` | `stdio` = local subprocess; `streamable-http` = HTTP endpoint at `/mcp`; `sse` = older HTTP/SSE transport |
 | `RAGDOLL_MCP_HOST` | `127.0.0.1` | Bind host when using SSE |
 | `RAGDOLL_MCP_PORT` | `9044` | Bind port when using SSE |
 
 **Run as a systemd service (SSE mode):**
 
 ```bash
-# Ensure env.ragdoll has RAGDOLL_MCP_TRANSPORT=sse (or set in the unit)
+# Ensure env.ragdoll has RAGDOLL_MCP_TRANSPORT=streamable-http (or sse), or set it in the unit
 sudo cp ragdoll-mcp.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now ragdoll-mcp
@@ -351,27 +352,40 @@ sudo systemctl enable --now ragdoll-mcp
     }
   }
   ```
-- **Remote (SSE)** — Claude on your Mac, RAGDoll on another host (e.g. behind Caddy on Tailscale). The server must have `RAGDOLL_MCP_TRANSPORT=sse` and the proxy must route e.g. `/ragdoll` to the MCP server (port 9044). Use **`--transport sse-only`** because RAGDoll serves SSE only; mcp-remote defaults to Streamable HTTP first and would get 502. Add to Claude config:
+- **Remote (Streamable HTTP)** — Claude (or any MCP client) elsewhere, RAGDoll on another host behind a reverse proxy, e.g. Caddy on Tailscale. Set `RAGDOLL_MCP_TRANSPORT=streamable-http` in `env.ragdoll`; the server serves the endpoint at **`/mcp`** on `RAGDOLL_MCP_PORT` (default 9044). Route a public path to it in Caddy:
+
+  ```
+  handle /ragdoll* {
+      uri replace /ragdoll /mcp
+      reverse_proxy 127.0.0.1:9044 {
+          header_up Host {host}
+          header_up X-Forwarded-Proto {scheme}
+      }
+  }
+  ```
+
+  The two `header_up` lines matter: without them the backend sees `Host: 127.0.0.1:9044` and any redirect it issues points at its own loopback address, which the client cannot reach.
+
+  Give clients the URL **without a trailing slash** — `https://YOUR-SERVER/ragdoll`. With the slash, Starlette redirects (307) to the non-slash path, and that redirect is what leaks the internal address.
+
+  Clients that speak Streamable HTTP natively (including Claude connectors) take that URL directly. For `mcp-remote`, force the transport so it does not try SSE first:
+
   ```json
   {
     "mcpServers": {
       "ragdoll": {
         "command": "npx",
-        "args": [
-          "-y",
-          "mcp-remote",
-          "https://YOUR-SERVER/ragdoll/sse",
-          "--transport",
-          "sse-only"
-        ]
+        "args": ["-y", "mcp-remote", "https://YOUR-SERVER/ragdoll", "--transport", "http-only"]
       }
     }
   }
   ```
-  Replace `YOUR-SERVER` with your base URL (e.g. `https://home-server.tailce6f0c.ts.net`). Restart Claude after editing.
 
-  **If you get 502 when using remote SSE:** the client is GETting `.../ragdoll/sse`; the proxy must forward that to the MCP server so the backend receives **`/mcp/sse`** (RAGDoll mounts the SSE app at `/mcp`). On the server: (1) Confirm the MCP service is up: `sudo systemctl status ragdoll-mcp` and that `env.ragdoll` has `RAGDOLL_MCP_TRANSPORT=sse`. (2) In Caddy, route `/ragdoll` to the MCP backend (e.g. port 9044) and **rewrite the path** so `/ragdoll` becomes `/mcp` (e.g. `uri replace /ragdoll /mcp` then `reverse_proxy 127.0.0.1:9044`). (3) From the server, test: `curl -N http://127.0.0.1:9044/mcp/sse` — you should get an SSE stream (or at least not 502). If that works but the browser still gets 502, check Caddy’s rewrite and that the upstream Host header (if set) matches what the app expects.
-- **Cursor / Claude Code** — For local, use the same `command`/`env` block as above in your project’s `.mcp.json` or global MCP config. For remote, use the same `npx`/`mcp-remote`/`--transport sse-only` args.
+  **Checking it:** `curl -i https://YOUR-SERVER/ragdoll` should return **406** with an `mcp-session-id` header. That is the healthy answer to a plain GET: the endpoint requires `Accept: text/event-stream, application/json`. A **404** means the path rewrite is wrong; a **307** to `127.0.0.1:9044` means you used the trailing slash or the `Host` header is not being passed; a **502** means the service is down (`sudo systemctl status ragdoll-mcp`).
+
+  **SSE instead:** set `RAGDOLL_MCP_TRANSPORT=sse`, route the proxy path to `/mcp` the same way (the SSE app mounts at `/mcp`, so clients use `.../ragdoll/sse`), and run `mcp-remote` with `--transport sse-only`.
+
+- **Cursor / Claude Code** — For local, use the same `command`/`env` block as above in your project’s `.mcp.json` or global MCP config. For remote, use the same `npx`/`mcp-remote` args as above.
 
 **Tools:** `list_collections` (list available collections), `query_rag` (semantic search with optional `prompt`, `history`, `threshold`, `collections`, `include_insights`, `limit_chunk_role`, `max_results`, `max_per_document`, `synthesize`, `synthesis_mode`), `submit_insight` (MCP-only: add an insight to the `insights` collection; `write_memory` remains as a deprecated alias). `query_rag` always searches the `insights` collection too, even when `collections` is set, unless `include_insights=false`; insight documents carry an `insight` object (id, topic, tags, origin, confidence, ...). To keep responses small, MCP returns each chunk's text once in `results` and each document's summary and URL once in `documents` (with the `chunk_ids` it contributed); the HTTP API keeps the full shape. Submissions use the format: Topic, Tags, Insight, Question, Reasoning, Open questions, Confidence (the old memory format with Conclusion / Open threads also parses). See **Insights and the query log** below. When `synthesize=true`, RAGDoll uses its LLM to turn prompt+history+chunks into **instructions** or a **direct answer**. Optional resources: `ragdoll://collections`, `ragdoll://collections/{group}/sources`.
 
