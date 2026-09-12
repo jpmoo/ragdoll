@@ -115,6 +115,29 @@ QUERY_LOG_HISTORY = (get_env("RAGDOLL_QUERY_LOG_HISTORY") or "false").lower() in
 # Hits stored per logged query
 QUERY_LOG_TOP_K = int(get_env("RAGDOLL_QUERY_LOG_TOP_K") or "10")
 
+# Insight generation ("stew"): nightly synthesis of logged queries into insights
+INSIGHT_MODEL = get_env("RAGDOLL_INSIGHT_MODEL") or CHUNK_MODEL
+# The insight model can run on a different machine than embeddings
+INSIGHT_OLLAMA_HOST = get_env("RAGDOLL_INSIGHT_OLLAMA_HOST") or OLLAMA_HOST
+# Context window for the insight model. Ollama's default is small and truncates the prompt silently.
+INSIGHT_NUM_CTX = int(get_env("RAGDOLL_INSIGHT_NUM_CTX") or "32768")
+# Seconds to wait for one insight-model call (it runs overnight, so this is generous)
+INSIGHT_TIMEOUT = int(get_env("RAGDOLL_INSIGHT_TIMEOUT") or "1800")
+# Queries at least this similar to each other are stewed together. Related questions in this corpus run
+# roughly 0.63-0.71 apart while unrelated ones sit below 0.6, so this is well under the retrieval threshold.
+STEW_CLUSTER_THRESHOLD = float(get_env("RAGDOLL_STEW_CLUSTER_THRESHOLD") or "0.65")
+# Clusters with fewer queries than this are skipped (one-off questions rarely generalize)
+STEW_MIN_QUERIES = int(get_env("RAGDOLL_STEW_MIN_QUERIES") or "2")
+STEW_MAX_CLUSTERS = int(get_env("RAGDOLL_STEW_MAX_CLUSTERS") or "10")
+# How far back to read queries when there is no previous run
+STEW_LOOKBACK_DAYS = int(get_env("RAGDOLL_STEW_LOOKBACK_DAYS") or "30")
+# Passages given to the model per cluster
+STEW_MAX_CHUNKS = int(get_env("RAGDOLL_STEW_MAX_CHUNKS") or "25")
+# An insight must cite at least this many document passages
+STEW_MIN_SUPPORT = int(get_env("RAGDOLL_STEW_MIN_SUPPORT") or "2")
+# A candidate this close to an existing insight reinforces it instead of creating a near-duplicate
+STEW_MERGE_SIMILARITY = float(get_env("RAGDOLL_STEW_MERGE_SIMILARITY") or "0.88")
+
 # API server
 API_PORT = int(get_env("RAGDOLL_API_PORT") or "9042")
 

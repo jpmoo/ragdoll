@@ -102,6 +102,58 @@ def log_query(
         return None
 
 
+def queries_since(since: str | None = None, limit: int | None = None) -> list[dict[str, Any]]:
+    """Logged queries from `since` (SQLite timestamp) onward, oldest first, with their embeddings.
+
+    This is the stew's input, so unlike recent_queries it keeps the embedding vector.
+    """
+    conn = _connect_log()
+    try:
+        sql = (
+            "SELECT id, ts, transport, prompt, expanded_query, collections, threshold, embedding, result_count, "
+            "top_similarity FROM queries"
+        )
+        params: list[Any] = []
+        if since:
+            sql += " WHERE ts >= ?"
+            params.append(since)
+        sql += " ORDER BY id"
+        if limit:
+            sql += " LIMIT ?"
+            params.append(limit)
+        out = []
+        for r in conn.execute(sql, params).fetchall():
+            d = dict(r)
+            d["collections"] = json.loads(d["collections"] or "[]")
+            try:
+                d["embedding"] = json.loads(d["embedding"]) if d["embedding"] else None
+            except json.JSONDecodeError:
+                d["embedding"] = None
+            out.append(d)
+        return out
+    finally:
+        conn.close()
+
+
+def hits_for_queries(query_ids: list[int]) -> dict[int, list[dict[str, Any]]]:
+    """Logged hits for each query id, best first."""
+    if not query_ids:
+        return {}
+    conn = _connect_log()
+    try:
+        placeholders = ",".join("?" * len(query_ids))
+        rows = conn.execute(
+            f"SELECT * FROM query_hits WHERE query_id IN ({placeholders}) ORDER BY query_id, rank",
+            tuple(query_ids),
+        ).fetchall()
+        out: dict[int, list[dict[str, Any]]] = {}
+        for r in rows:
+            out.setdefault(r["query_id"], []).append(dict(r))
+        return out
+    finally:
+        conn.close()
+
+
 def recent_queries(limit: int = 20) -> list[dict[str, Any]]:
     """Most recent queries first, without embeddings."""
     conn = _connect_log()

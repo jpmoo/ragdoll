@@ -2,7 +2,6 @@
 
 import json
 import logging
-import math
 import re
 from pathlib import Path
 from typing import Any
@@ -13,7 +12,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 from . import config
-from .embedder import embed
+from .embedder import cosine_similarity as _cosine_similarity, embed
 from .interpreters import CHUNK_ROLES
 from .insights import INSIGHTS_GROUP, get_insights_by_source_paths
 from .query_log import log_query
@@ -34,16 +33,6 @@ class QueryRequest(BaseModel):
     synthesize: bool = False  # If true, LLM synthesizes prompt+history+RAG into instructions or answer
     synthesis_mode: str = "instructions"  # "instructions" (for an assistant) or "answer" (direct summary)
     include_insights: bool = True  # Also search the insights collection when group is set; false leaves it out of search-all
-
-
-def _cosine_similarity(a: list[float], b: list[float]) -> float:
-    """Compute cosine similarity between two vectors."""
-    dot = sum(x * y for x, y in zip(a, b))
-    norm_a = math.sqrt(sum(x * x for x in a))
-    norm_b = math.sqrt(sum(x * x for x in b))
-    if norm_a == 0 or norm_b == 0:
-        return 0.0
-    return dot / (norm_a * norm_b)
 
 
 def _expand_query(prompt: str, history: str | None) -> str:

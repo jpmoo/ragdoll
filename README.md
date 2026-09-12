@@ -392,6 +392,29 @@ The **`insights`** collection holds learnings RAGDoll builds from how its collec
   ```
 - **Migrating from memory:** deploy, restart the RAGDoll services, then run `ragdoll insights migrate-memory` (try `--dry-run` first) as the user that owns the data directory, with the services' environment loaded. With the default units (no `User=`) that's root: `sudo bash -c 'set -a; . /etc/default/ragdoll-ingest; set +a; /opt/ragdoll/.venv/bin/ragdoll insights migrate-memory'`. Each memory becomes an `agent` insight and `{DATA_DIR}/memory/` is moved to `{DATA_DIR}/_archive/`. Re-running skips memories already migrated.
 
+### Nightly synthesis (the "stew")
+
+`ragdoll insights stew` reads the query log, groups questions that are about the same thing, and asks the insight model what is worth remembering from the passages those questions returned. It is a **dry run unless you pass `--write`**: it records what it would create and writes a reflection, but creates nothing.
+
+```bash
+ragdoll insights stew                      # dry run since the last run; --since, --model, --max-clusters
+ragdoll insights stew --write              # actually create the insights it proposes
+ragdoll insights runs                      # every run, with counts
+ragdoll insights run stew-20260912T0300Z-1a2b   # clusters, candidates, decisions and reasons
+ragdoll insights reflection stew-20260912T0300Z-1a2b
+```
+
+What a run does:
+
+1. **Clusters** queries logged since the last run (each joins the cluster holding the most similar question; `RAGDOLL_STEW_CLUSTER_THRESHOLD`). Clusters with fewer than `RAGDOLL_STEW_MIN_QUERIES` questions are skipped.
+2. **Gathers the passages** those questions returned, from the query log's snapshots, so the evidence is what the asker actually saw.
+3. **Asks the model** for candidate insights, each citing the passages that support it, plus the alternatives it set aside and where the claim is thin.
+4. **Checks the grounding.** A candidate citing a passage it wasn't shown, or fewer than `RAGDOLL_STEW_MIN_SUPPORT` passages, is rejected with that reason recorded.
+5. **Decides** per candidate: close to an existing insight (`RAGDOLL_STEW_MERGE_SIMILARITY`) means reinforce it with new lineage rather than create a near-duplicate; close to a **retired** one means reject it, so what you retired doesn't come back.
+6. **Writes a reflection** to `{DATA_DIR}/insights/reflections/<run_id>.md`: the model's narrative followed by the plain record of the run (every cluster, candidate, decision, and the questions that found nothing).
+
+Runs, clusters and candidates are kept in the insights DB (`stew_runs`, `stew_clusters`, `stew_candidates`), so an insight can always be traced back to the questions and passages behind it.
+
 **Query log:** every API and MCP query is recorded in `{DATA_DIR}/_querylog/querylog.db` with its expanded query, embedding, and top hits (with text snapshots). It is the input for insight generation and is never listed as a collection. `ragdoll queries` lists recent queries; `ragdoll queries 42` shows one with its hits.
 
 | Variable | Default | Description |
@@ -400,6 +423,17 @@ The **`insights`** collection holds learnings RAGDoll builds from how its collec
 | `RAGDOLL_QUERY_LOG` | `true` | Log API/MCP queries and their top hits |
 | `RAGDOLL_QUERY_LOG_HISTORY` | `false` | Also store the caller's conversation history with each logged query |
 | `RAGDOLL_QUERY_LOG_TOP_K` | `10` | Hits stored per logged query |
+| `RAGDOLL_INSIGHT_MODEL` | `RAGDOLL_CHUNK_MODEL` | Model that synthesizes insights at night |
+| `RAGDOLL_INSIGHT_OLLAMA_HOST` | `RAGDOLL_OLLAMA_HOST` | Host for the insight model, if it runs elsewhere |
+| `RAGDOLL_INSIGHT_NUM_CTX` | `32768` | Context window for the insight model |
+| `RAGDOLL_INSIGHT_TIMEOUT` | `1800` | Seconds per insight-model call |
+| `RAGDOLL_STEW_CLUSTER_THRESHOLD` | `0.65` | Similarity at which two questions are stewed together |
+| `RAGDOLL_STEW_MIN_QUERIES` | `2` | Smallest cluster worth stewing |
+| `RAGDOLL_STEW_MAX_CLUSTERS` | `10` | Clusters per run |
+| `RAGDOLL_STEW_LOOKBACK_DAYS` | `30` | Query history read on the first run |
+| `RAGDOLL_STEW_MAX_CHUNKS` | `25` | Passages given to the model per cluster |
+| `RAGDOLL_STEW_MIN_SUPPORT` | `2` | Passages an insight must cite |
+| `RAGDOLL_STEW_MERGE_SIMILARITY` | `0.88` | At or above this, a candidate reinforces instead of creating |
 
 ## Review web app
 

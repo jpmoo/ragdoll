@@ -1,6 +1,7 @@
 """Embed text via Ollama nomic-embed-text."""
 
 import logging
+import math
 
 import requests
 
@@ -8,6 +9,16 @@ from . import config
 from .action_log import log as action_log
 
 logger = logging.getLogger(__name__)
+
+
+def cosine_similarity(a: list[float], b: list[float]) -> float:
+    """Cosine similarity between two embedding vectors; 0.0 if either has no magnitude."""
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(x * x for x in b))
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot / (norm_a * norm_b)
 
 
 def build_text_to_embed(

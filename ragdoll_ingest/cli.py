@@ -19,6 +19,7 @@ from .insights import (
     retire_insight,
 )
 from .query_log import get_query, recent_queries
+from .stew import get_run, list_runs, read_reflection, run_stew
 from .storage import (
     _connect,
     _list_sync_groups,
@@ -285,6 +286,62 @@ def cmd_insights(args: argparse.Namespace) -> int:
             restore_insight(args.insight_id, actor="user", reason=args.reason)
             print(f"Restored insight {args.insight_id}.")
             return 0
+        if args.insights_command == "stew":
+            summary = run_stew(
+                write=args.write, model=args.model, since=args.since,
+                max_clusters=args.max_clusters, progress=lambda m: print(f"  {m}"),
+            )
+            mode = "created" if args.write else "would create"
+            print(f"\nRun {summary['run_id']} ({'writing' if args.write else 'dry run'}, model {summary['model']})")
+            print(f"  {summary['n_queries']} queries since {summary['since']}; {len(summary['clusters'])} cluster(s) stewed")
+            print(f"  {mode}: {summary['n_created']}   reinforced: {summary['n_reinforced']}   rejected: {summary['n_rejected']}")
+            if summary["gaps"]:
+                print(f"  {len(summary['gaps'])} question(s) found nothing (listed in the reflection)")
+            print(f"  Reflection: {summary['reflection_path']}")
+            if not args.write:
+                print("  Nothing was written. Re-run with --write to create these insights.")
+            return 0
+        if args.insights_command == "runs":
+            runs = list_runs(args.limit)
+            if not runs:
+                print("No stew runs yet.")
+                return 0
+            print(f"{'Run':<24} {'Mode':<8} {'Queries':<8} {'New':<5} {'Reinf':<6} {'Rej':<5} Model")
+            print("-" * 100)
+            for r in runs:
+                mode = "dry run" if r["dry_run"] else "write"
+                print(f"{r['run_id']:<24} {mode:<8} {r['n_queries']:<8} {r['n_created']:<5} {r['n_reinforced']:<6} {r['n_rejected']:<5} {r['model']}")
+            return 0
+        if args.insights_command == "run":
+            run = get_run(args.run_id)
+            if not run:
+                print(f"Error: Run {args.run_id} not found.", file=sys.stderr)
+                return 1
+            print(f"Run {run['run_id']} ({'dry run' if run['dry_run'] else 'write'}, model {run['model']}, {run['status']})")
+            print(f"  {run['started_at']} to {run['finished_at'] or '(unfinished)'}; {run['n_queries']} queries since {run['since']}")
+            for c in run["clusters"]:
+                print(f"\n[{c['label']}]  {c['n_queries']} questions, {c['n_chunks']} passages, {c['outcome']}")
+                if c["notes"]:
+                    print(f"  Notes: {c['notes']}")
+                for cand in c["candidates"]:
+                    target = f" -> insight {cand['insight_id']}" if cand["insight_id"] else ""
+                    print(f"  - [{cand['decision']}{target}] {cand['statement']}")
+                    if cand["decision_reason"]:
+                        print(f"      {cand['decision_reason']}")
+                    sources = cand["trace"].get("supporting_sources") or []
+                    if sources:
+                        print(f"      sources: {', '.join(sources)}")
+                    if cand["trace"].get("weak_spots"):
+                        print(f"      weak spots: {cand['trace']['weak_spots']}")
+            print(f"\nReflection: {run['reflection_path']}")
+            return 0
+        if args.insights_command == "reflection":
+            text = read_reflection(args.run_id)
+            if text is None:
+                print(f"Error: No reflection for run {args.run_id}.", file=sys.stderr)
+                return 1
+            print(text)
+            return 0
         if args.insights_command == "migrate-memory":
             r = migrate_memory_collection(archive=not args.no_archive, dry_run=args.dry_run)
             if r["found"] == 0:
@@ -450,6 +507,25 @@ def main() -> int:
     insights_restore = insights_sub.add_parser("restore", help="Make a retired or superseded insight searchable again")
     insights_restore.add_argument("insight_id", type=int)
     insights_restore.add_argument("--reason")
+    insights_stew = insights_sub.add_parser(
+        "stew",
+        help="Synthesize insights from logged queries (dry run unless --write)",
+        description=(
+            "Cluster recently logged queries, send each cluster's questions and the passages they returned to the "
+            "insight model, and record what it proposes. Writes a reflection either way."
+        ),
+    )
+    insights_stew.add_argument("--write", action="store_true", help="Create the insights instead of only recording what would be created")
+    insights_stew.add_argument("--model", help=f"Override RAGDOLL_INSIGHT_MODEL (currently {config.INSIGHT_MODEL})")
+    insights_stew.add_argument("--since", metavar="TS", help="Read queries from this UTC timestamp (default: the last run)")
+    insights_stew.add_argument("--max-clusters", type=int, dest="max_clusters", help="Stew at most this many clusters")
+    insights_runs = insights_sub.add_parser("runs", help="List stew runs")
+    insights_runs.add_argument("-n", "--limit", type=int, default=20)
+    insights_run = insights_sub.add_parser("run", help="Show one stew run: clusters, candidates, and decisions")
+    insights_run.add_argument("run_id")
+    insights_reflection = insights_sub.add_parser("reflection", help="Print a run's reflection")
+    insights_reflection.add_argument("run_id")
+
     insights_migrate = insights_sub.add_parser(
         "migrate-memory",
         help="Copy the legacy memory collection into insights, then archive it",

@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from . import config
-from .embedder import build_text_to_embed, embed
+from .embedder import build_text_to_embed, cosine_similarity, embed
 from .storage import _connect, add_chunks, init_db
 
 INSIGHTS_GROUP = "insights"
@@ -482,6 +482,76 @@ def list_insights(
     conn = _connect_insights()
     try:
         return [_row_to_insight(r) for r in conn.execute(sql, (*params, limit)).fetchall()]
+    finally:
+        conn.close()
+
+
+def find_similar_insights(
+    embedding: list[float],
+    *,
+    statuses: tuple[str, ...] = ("active",),
+    top_k: int = 5,
+    min_similarity: float = 0.0,
+) -> list[dict[str, Any]]:
+    """Insights whose statement embedding is closest to `embedding`, each with a "similarity" field.
+
+    Retired and superseded insights keep their embedding, so pass those statuses to check whether something
+    was already considered and rejected.
+    """
+    conn = _connect_insights()
+    try:
+        placeholders = ",".join("?" * len(statuses))
+        rows = conn.execute(
+            f"SELECT * FROM insights WHERE status IN ({placeholders}) AND embedding IS NOT NULL",
+            tuple(statuses),
+        ).fetchall()
+        scored: list[dict[str, Any]] = []
+        for r in rows:
+            try:
+                sim = cosine_similarity(embedding, json.loads(r["embedding"]))
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if sim >= min_similarity:
+                d = _row_to_insight(r)
+                d["similarity"] = round(sim, 4)
+                scored.append(d)
+        scored.sort(key=lambda d: d["similarity"], reverse=True)
+        return scored[:top_k]
+    finally:
+        conn.close()
+
+
+def reinforce_insight(
+    insight_id: int,
+    lineage: list[dict[str, Any]],
+    *,
+    actor: str,
+    reason: str | None = None,
+    run_id: str | None = None,
+    session_id: str | None = None,
+) -> dict[str, Any]:
+    """Attach new supporting lineage to an existing insight without changing its text.
+
+    This is the merge case: a later run found the same conclusion again. The statement stays as written (so a
+    person's wording is never overwritten) and the version is unchanged; only lineage and history grow.
+    """
+    conn = _connect_insights()
+    try:
+        row = _fetch_row(conn, insight_id)
+        if row["status"] != "active":
+            raise InsightError(f"Insight {insight_id} is {row['status']}; only active insights can be reinforced")
+        if lineage:
+            _add_lineage(conn, insight_id, lineage)
+        conn.execute("UPDATE insights SET updated_at = ? WHERE id = ?", (_now(), insight_id))
+        _record_revision(
+            conn, insight_id, actor=actor, action="reinforce", before=None,
+            after={"lineage_added": len(lineage or [])}, reason=reason, run_id=run_id, session_id=session_id,
+        )
+        conn.commit()
+        return _row_to_insight(_fetch_row(conn, insight_id))
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 
