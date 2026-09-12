@@ -275,8 +275,64 @@ def _call_model(prompt: str, model: str) -> dict[str, Any] | None:
         obj = json.loads(text)
         return obj if isinstance(obj, dict) else None
     except json.JSONDecodeError as e:
-        logger.warning("Insight model returned invalid JSON: %s", e)
+        logger.warning("Insight model returned invalid JSON (%s); first 500 chars: %s", e, text[:500])
         return None
+
+
+# Keys models use for the list of proposals and for citations, beyond the ones the prompt asks for
+_CANDIDATE_LIST_KEYS = ("insights", "candidates", "candidate_insights", "items")
+_SUPPORT_KEYS = ("supports", "support", "supporting_passages", "citations", "passages", "evidence", "sources")
+
+
+def _passage_numbers(value: Any) -> list[int]:
+    """Coerce whatever the model used for citations into passage numbers.
+
+    Models return ints, digit strings, "[3]", "passage 3", or {"id": 3}; all of those mean the same thing, and
+    throwing them away would reject well-grounded insights for a formatting difference.
+    """
+    out: list[int] = []
+
+    def add(v: Any) -> None:
+        if isinstance(v, bool):
+            return
+        if isinstance(v, int):
+            out.append(v)
+        elif isinstance(v, float) and v.is_integer():
+            out.append(int(v))
+        elif isinstance(v, str):
+            out.extend(int(m) for m in re.findall(r"\d+", v))
+        elif isinstance(v, dict):
+            for key in ("n", "id", "number", "passage", "passage_number", "index"):
+                if key in v:
+                    add(v[key])
+                    return
+        elif isinstance(v, (list, tuple)):
+            for item in v:
+                add(item)
+
+    add(value)
+    seen: set[int] = set()
+    return [n for n in out if not (n in seen or seen.add(n))]
+
+
+def _candidate_list(raw: dict[str, Any]) -> list[dict[str, Any]]:
+    """The proposals from the model's JSON, whichever key it used; a lone object counts as one proposal."""
+    for key in _CANDIDATE_LIST_KEYS:
+        value = raw.get(key)
+        if isinstance(value, list):
+            return [v for v in value if isinstance(v, dict)]
+        if isinstance(value, dict):
+            return [value]
+    return [raw] if raw.get("statement") else []
+
+
+def _candidate_supports(item: dict[str, Any]) -> list[int]:
+    for key in _SUPPORT_KEYS:
+        if key in item:
+            nums = _passage_numbers(item[key])
+            if nums:
+                return nums
+    return []
 
 
 def _validate_candidates(
@@ -292,13 +348,11 @@ def _validate_candidates(
     valid_ns = {e["n"] for e in evidence}
     accepted: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
-    for item in (raw.get("insights") or [])[: MAX_CANDIDATES_PER_CLUSTER * 2]:
-        if not isinstance(item, dict):
-            continue
-        statement = (item.get("statement") or "").strip()
+    for item in _candidate_list(raw)[: MAX_CANDIDATES_PER_CLUSTER * 2]:
+        statement = str(item.get("statement") or item.get("insight") or "").strip()
         if not statement:
             continue
-        supports = [s for s in (item.get("supports") or []) if isinstance(s, int)]
+        supports = _candidate_supports(item)
         unknown = sorted(set(supports) - valid_ns)
         cited = sorted(set(supports) & valid_ns)
         if unknown:
@@ -476,6 +530,8 @@ def run_stew(
                 summary["n_rejected"] += 1
 
             summary["n_candidates"] += len(cluster_summary["candidates"])
+            if not cluster_summary["candidates"] and not cluster_summary["notes"]:
+                cluster_summary["notes"] = f"the model replied with keys {sorted(raw)} and no usable insights"
             cluster_summary["outcome"] = "candidates" if cluster_summary["candidates"] else "nothing_worth_recording"
             summary["clusters"].append(cluster_summary)
 
