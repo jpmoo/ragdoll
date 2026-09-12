@@ -176,7 +176,8 @@ def _gather_evidence(members: list[dict[str, Any]], max_chunks: int) -> tuple[li
                 best[key] = {
                     "group": h["group_name"],
                     "source_path": h["source_path"],
-                    "source_name": Path(h["source_path"]).name,
+                    # The display title when the log has it; web-ingested sources would otherwise show as slugs
+                    "source_name": (h["source_name"] if "source_name" in h.keys() else None) or Path(h["source_path"]).name,
                     "chunk_id": h["chunk_id"],
                     "chunk_index": h["chunk_index"],
                     "chunk_role": h["chunk_role"],

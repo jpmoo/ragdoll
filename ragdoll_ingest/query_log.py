@@ -49,10 +49,17 @@ def _connect_log() -> sqlite3.Connection:
             chunk_index INTEGER,
             chunk_role TEXT,
             similarity REAL NOT NULL,
-            text_snapshot TEXT
+            text_snapshot TEXT,
+            source_name TEXT
         );
         CREATE INDEX IF NOT EXISTS ix_query_hits_query ON query_hits(query_id);
     """)
+    # Added after the first release; existing logs predate it
+    try:
+        conn.execute("ALTER TABLE query_hits ADD COLUMN source_name TEXT")
+    except sqlite3.OperationalError as e:
+        if "duplicate" not in str(e).lower():
+            raise
     return conn
 
 
@@ -87,10 +94,11 @@ def log_query(
             for rank, r in enumerate(results[: config.QUERY_LOG_TOP_K], 1):
                 conn.execute(
                     "INSERT INTO query_hits (query_id, rank, group_name, source_path, chunk_id, chunk_index, chunk_role, "
-                    "similarity, text_snapshot) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "similarity, text_snapshot, source_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         query_id, rank, r["group"], r["source_path"], r.get("chunk_id"), r.get("chunk_index"),
                         r.get("chunk_role"), r["similarity"], (r.get("text") or "")[:SNAPSHOT_MAX_CHARS],
+                        r.get("source_name"),
                     ),
                 )
             conn.commit()

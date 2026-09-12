@@ -429,6 +429,19 @@ What a run does:
 
 Runs, clusters and candidates are kept in the insights DB (`stew_runs`, `stew_clusters`, `stew_candidates`), so an insight can always be traced back to the questions and passages behind it.
 
+**Running it nightly:** `ragdoll-stew.service` (a oneshot) and `ragdoll-stew.timer` run the stew at 03:00. The unit passes `--write`, so insights are created; drop that flag in the unit to keep getting reflections without writes.
+
+```bash
+sudo cp ragdoll-stew.service ragdoll-stew.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now ragdoll-stew.timer
+systemctl list-timers ragdoll-stew.timer     # when it runs next
+sudo systemctl start ragdoll-stew.service    # run it now
+journalctl -u ragdoll-stew -n 50             # what the last run did
+```
+
+Each morning, `ragdoll insights runs` shows what happened and `ragdoll insights reflection <run_id>` explains it. Anything you disagree with, retire it with a reason; the run that proposed it stays on record either way.
+
 **Query log:** every API and MCP query is recorded in `{DATA_DIR}/_querylog/querylog.db` with its expanded query, embedding, and top hits (with text snapshots). It is the input for insight generation and is never listed as a collection. `ragdoll queries` lists recent queries; `ragdoll queries 42` shows one with its hits.
 
 | Variable | Default | Description |

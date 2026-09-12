@@ -1,0 +1,25 @@
+[Unit]
+Description=RAGDoll stew: synthesize insights from logged queries
+After=network-online.target ollama.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Load environment from env.ragdoll or /etc/default/ragdoll-ingest
+EnvironmentFile=-/opt/ragdoll/env.ragdoll
+EnvironmentFile=-/etc/default/ragdoll-ingest
+# Override via: systemctl edit ragdoll-stew
+#   [Service]
+#   Environment="RAGDOLL_INSIGHT_MODEL=qwen3.5:122b"
+#   User=myuser
+#   Group=myuser
+#   WorkingDirectory=/opt/ragdoll
+# Drop --write to run it nightly without creating anything (reflections only)
+ExecStart=/opt/ragdoll/.venv/bin/ragdoll insights stew --write
+
+WorkingDirectory=/opt/ragdoll
+# A large insight model on a loaded machine can take a while; don't kill it mid-run
+TimeoutStartSec=4h
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ragdoll-stew
