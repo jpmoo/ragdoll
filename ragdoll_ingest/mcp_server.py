@@ -231,6 +231,29 @@ def _make_mcp() -> "FastMCP":
     return mcp
 
 
+class _NormalizeTrailingSlash:
+    """Serve "/mcp/" as "/mcp" instead of redirecting to it.
+
+    Starlette answers the trailing-slash form with a 307 whose Location it builds from the request's Host
+    header. Behind a reverse proxy that doesn't forward the external host, that Location is the server's own
+    loopback address (http://127.0.0.1:9044/mcp), and clients that follow it hang on their own localhost.
+    Rewriting the path here means either form just works, however the proxy is configured.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") == "http":
+            path = scope.get("path", "")
+            if len(path) > 1 and path.endswith("/"):
+                scope = dict(scope)
+                scope["path"] = path.rstrip("/")
+                if scope.get("raw_path"):
+                    scope["raw_path"] = scope["path"].encode("utf-8")
+        await self.app(scope, receive, send)
+
+
 def main() -> None:
     """Entry point: run MCP server in stdio, SSE, or streamable-http mode from RAGDOLL_MCP_TRANSPORT."""
     mcp = _make_mcp()
@@ -251,7 +274,7 @@ def main() -> None:
             except ImportError:
                 app = sse_app
         uvicorn.run(
-            app,
+            _NormalizeTrailingSlash(app),
             host=config.MCP_HOST,
             port=config.MCP_PORT,
             log_level="info",

@@ -366,7 +366,7 @@ sudo systemctl enable --now ragdoll-mcp
 
   The two `header_up` lines matter: without them the backend sees `Host: 127.0.0.1:9044` and any redirect it issues points at its own loopback address, which the client cannot reach.
 
-  Give clients the URL **without a trailing slash** — `https://YOUR-SERVER/ragdoll`. With the slash, Starlette redirects (307) to the non-slash path, and that redirect is what leaks the internal address.
+  Either `https://YOUR-SERVER/ragdoll` or `https://YOUR-SERVER/ragdoll/` works: RAGDoll serves the trailing-slash form directly instead of redirecting to it. (Without that, Starlette answers the slash form with a 307 whose `Location` comes from the `Host` header — behind a proxy that doesn't forward the external host, that points clients at `http://127.0.0.1:9044/mcp`, their own localhost, where they hang.)
 
   Clients that speak Streamable HTTP natively (including Claude connectors) take that URL directly. For `mcp-remote`, force the transport so it does not try SSE first:
 
@@ -381,7 +381,7 @@ sudo systemctl enable --now ragdoll-mcp
   }
   ```
 
-  **Checking it:** `curl -i https://YOUR-SERVER/ragdoll` should return **406** with an `mcp-session-id` header. That is the healthy answer to a plain GET: the endpoint requires `Accept: text/event-stream, application/json`. A **404** means the path rewrite is wrong; a **307** to `127.0.0.1:9044` means you used the trailing slash or the `Host` header is not being passed; a **502** means the service is down (`sudo systemctl status ragdoll-mcp`).
+  **Checking it:** `curl -i https://YOUR-SERVER/ragdoll` should return **406** with an `mcp-session-id` header. That is the healthy answer to a plain GET: the endpoint requires `Accept: text/event-stream, application/json`. A **404** means the path rewrite is wrong; a **307** to `127.0.0.1:9044` means the server predates the trailing-slash fix and the `Host` header is not being passed; a **502** means the service is down (`sudo systemctl status ragdoll-mcp`).
 
   **SSE instead:** set `RAGDOLL_MCP_TRANSPORT=sse`, route the proxy path to `/mcp` the same way (the SSE app mounts at `/mcp`, so clients use `.../ragdoll/sse`), and run `mcp-remote` with `--transport sse-only`.
 
