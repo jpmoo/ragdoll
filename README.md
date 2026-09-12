@@ -393,7 +393,7 @@ sudo systemctl enable --now ragdoll-mcp
 
 ## Insights and the query log
 
-The **`insights`** collection holds learnings RAGDoll builds from how its collections are used. It replaces the old `memory` collection and is searched by every query by default (API: `include_insights`, MCP: `include_insights`; both default to `true`). When other collections are searched too, at most `RAGDOLL_INSIGHTS_MAX_RESULTS` insight chunks (default `5`, `0` = no cap) are returned so insights don't crowd out documents.
+The **`insights`** collection holds learnings RAGDoll builds from how its collections are used. It replaces the old `memory` collection and is searched by every query by default (API: `include_insights`, MCP: `include_insights`; both default to `true`). When other collections are searched too, at most `RAGDOLL_INSIGHTS_MAX_RESULTS` insight chunks (default `5`, `0` = no cap) are returned so insights don't crowd out documents. MCP tightens that further, to about a quarter of `max_results`: an insight's statement closely matches the question that produced it, so without a limit insights outrank the documents they were drawn from.
 
 - **What an insight holds:** a statement and optional rationale (both embedded), the question it answers, topic, tags, open questions, confidence, and an origin: `stew` (generated from query history), `chat` or `asserted` (from a person), or `agent` (submitted over MCP). Lineage records the chunks, queries, and other insights it came from, and every change is kept as a revision.
 - **Never hard-deleted:** retiring an insight removes it from search but keeps it and the reason, so it isn't regenerated later. Insights changed by a person are pinned so automated runs leave them alone.

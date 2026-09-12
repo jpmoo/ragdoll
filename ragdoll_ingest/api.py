@@ -468,6 +468,7 @@ def _do_query(
     synthesis_mode: str = "instructions",
     include_insights: bool = True,
     log_as: str | None = None,
+    insights_cap: int | None = None,
 ) -> dict[str, Any]:
     """Shared query logic for GET and POST endpoints.
     
@@ -484,6 +485,9 @@ def _do_query(
                           If false, it is left out of search-all (it is still searched if named in group).
         log_as: Transport name ("api", "mcp") to record the query in the query log; None skips logging
                 (use None for RAGDoll's own internal queries).
+        insights_cap: Max insight chunks to keep when other collections are searched too; defaults to
+                      RAGDOLL_INSIGHTS_MAX_RESULTS. Callers that return fewer results than that should pass a
+                      smaller number, or insights take most of the slots.
     """
     # Optionally infer chunk roles from user input (prompt + context); uses current CHUNK_ROLES (description, application, implication)
     role_filter: list[str] | None = None
@@ -537,7 +541,9 @@ def _do_query(
 
     # Keep insights from crowding out document chunks when other collections are searched too
     if len(groups) > 1:
-        all_results = _cap_insight_results(all_results, config.INSIGHTS_MAX_RESULTS)
+        all_results = _cap_insight_results(
+            all_results, config.INSIGHTS_MAX_RESULTS if insights_cap is None else insights_cap
+        )
 
     if log_as:
         log_query(

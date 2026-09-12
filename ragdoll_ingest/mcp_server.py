@@ -115,7 +115,7 @@ def _make_mcp() -> "FastMCP":
             max_per_document: Maximum chunks returned from any one document, applied before max_results so the slots spread across sources. Default 3; 0 = no limit.
             synthesize: When true, LLM synthesizes prompt+history+RAG into instructions for an assistant or a direct answer.
             synthesis_mode: "instructions" (default) = instructions for the caller to use; "answer" = direct summary/answer.
-            include_insights: When true (default), the insights collection is searched too, even if collections names others. Insight documents carry an "insight" object (id, topic, tags, origin, confidence).
+            include_insights: When true (default), the insights collection is searched too, even if collections names others. Insight documents carry an "insight" object (id, topic, tags, origin, confidence). Insights are held to about a quarter of max_results so they don't crowd out the documents they were drawn from.
         """
         try:
             use_threshold = config.QUERY_THRESHOLD if threshold is None else threshold
@@ -130,6 +130,9 @@ def _make_mcp() -> "FastMCP":
                 synthesis_mode,
                 include_insights=include_insights,
                 log_as="mcp",
+                # Insight statements closely match the questions that produced them, so they outrank the
+                # documents behind them. Keep them to a quarter of the slots the caller asked for.
+                insights_cap=min(config.INSIGHTS_MAX_RESULTS, max(1, max_results // 4)),
             )
         except HTTPException as e:
             raise ValueError(f"{e.detail}") from e

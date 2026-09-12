@@ -251,7 +251,8 @@ def _print_insight(i: dict) -> None:
             if entry["ref_source_path"]:
                 ref = f"{entry['ref_group']}: {Path(entry['ref_source_path']).name}#{entry['ref_chunk_index']}"
             elif entry["ref_query_id"]:
-                ref = f"query {entry['ref_query_id']}"
+                asked = (entry["text_snapshot"] or "").strip()
+                ref = f"query {entry['ref_query_id']}" + (f': "{asked[:80]}"' if asked else "")
             else:
                 ref = f"insight {entry['ref_insight_id']}"
             print(f"  - {entry['kind']} ({entry['relation'] or 'related'}): {ref}")
