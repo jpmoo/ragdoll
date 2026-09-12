@@ -242,24 +242,50 @@ def _generate(prompt: str, model: str, *, want_json: bool, temperature: float = 
     """One call to the insight model. Returns the response text, or None if the call failed.
 
     Every model call in the stew goes through here so the host, context size and timeout are set in one place.
+
+    Thinking models (Qwen3 and friends) put their answer in Ollama's "thinking" field and leave "response"
+    empty, which looks like an empty reply. We ask Ollama to turn thinking off; if the server is too old to
+    accept that, we retry without it and read whichever field came back.
     """
     url = (config.INSIGHT_OLLAMA_HOST or "").rstrip("/")
     payload: dict[str, Any] = {
         "model": model,
         "prompt": prompt,
         "stream": False,
+        "think": False,
         # Ollama's default context is far smaller than these prompts and would truncate them silently
         "options": {"temperature": temperature, "num_ctx": config.INSIGHT_NUM_CTX},
     }
     if want_json:
         payload["format"] = "json"
-    try:
-        r = requests.post(f"{url}/api/generate", json=payload, timeout=config.INSIGHT_TIMEOUT)
-        r.raise_for_status()
-        return (r.json().get("response") or "").strip() or None
-    except Exception as e:
-        logger.warning("Insight model call failed (model=%s): %s", model, e)
-        return None
+    for attempt in ("with think=false", "without think"):
+        try:
+            r = requests.post(f"{url}/api/generate", json=payload, timeout=config.INSIGHT_TIMEOUT)
+            if r.status_code >= 400:
+                body = r.text[:300]
+                if "think" in body.lower() and "think" in payload:
+                    logger.info("Ollama rejected think=false (%s); retrying without it", body)
+                    payload.pop("think")
+                    continue
+                logger.warning("Insight model returned HTTP %s (model=%s): %s", r.status_code, model, body)
+                return None
+            data = r.json()
+            text = (data.get("response") or "").strip()
+            if not text:
+                # Thinking wasn't suppressed; the answer is in the other field
+                text = (data.get("thinking") or "").strip()
+                if text:
+                    logger.info("Insight model answered in the thinking field (model=%s)", model)
+            if not text:
+                logger.warning(
+                    "Insight model returned nothing usable (model=%s, attempt=%s, done_reason=%s)",
+                    model, attempt, data.get("done_reason"),
+                )
+            return text or None
+        except Exception as e:
+            logger.warning("Insight model call failed (model=%s): %s", model, e)
+            return None
+    return None
 
 
 def _call_model(prompt: str, model: str) -> dict[str, Any] | None:
