@@ -672,6 +672,10 @@ def _save_run(run_id: str, summary: dict[str, Any], finished: str) -> None:
 def _reflection_prompt(summary: dict[str, Any]) -> str:
     """Ask for a narrative built from the run's own record, not from the model's memory of its thinking."""
     record = {
+        "mode": (
+            "dry run: nothing was created, these are proposals only"
+            if summary["dry_run"] else "writing: accepted insights were created"
+        ),
         "queries_considered": summary["n_queries"],
         "clusters": [
             {
@@ -697,6 +701,7 @@ def _reflection_prompt(summary: dict[str, Any]) -> str:
         "Write it up in markdown for the person who owns the collections, in these sections:\n"
         "## What I looked at\n## How the thinking went\n## What I concluded\n## What I set aside\n## Gaps\n\n"
         "Describe only what the record shows. Do not invent findings, and name the documents and themes it names. "
+        "Respect the mode: on a dry run say what you would record, never that insights were created. "
         "Be direct and specific; a few hundred words is plenty.\n\n"
         f"RECORD\n{json.dumps(record, indent=2, ensure_ascii=False)}"
     )
@@ -718,6 +723,8 @@ def _fallback_reflection(summary: dict[str, Any]) -> str:
                 lines += [f"  - {cand['decision_reason']}"]
             if cand.get("supporting_sources"):
                 lines += [f"  - sources: {', '.join(cand['supporting_sources'])}"]
+            if cand.get("confidence") is not None:
+                lines += [f"  - confidence: {cand['confidence']}"]
         lines += [""]
     if summary["gaps"]:
         lines += ["## Gaps", "", *[f"- {g['prompt']}" for g in summary["gaps"]], ""]
