@@ -423,7 +423,7 @@ What a run does:
 1. **Clusters** queries logged since the last run (each joins the cluster holding the most similar question; `RAGDOLL_STEW_CLUSTER_THRESHOLD`). Clusters with fewer than `RAGDOLL_STEW_MIN_QUERIES` questions are skipped.
 2. **Gathers the passages** those questions returned, from the query log's snapshots, so the evidence is what the asker actually saw.
 3. **Asks the model** for candidate insights, each citing the passages that support it, plus the alternatives it set aside and where the claim is thin.
-4. **Checks the grounding.** A candidate citing a passage it wasn't shown, or fewer than `RAGDOLL_STEW_MIN_SUPPORT` passages, is rejected with that reason recorded.
+4. **Checks the grounding.** A candidate is rejected, with the reason recorded, if it cites a passage it wasn't shown, cites fewer than `RAGDOLL_STEW_MIN_SUPPORT` passages, or draws them from fewer than `RAGDOLL_STEW_MIN_SOURCES` different documents — an automatic insight should connect sources rather than restate one document RAGDoll already retrieves. Passage numbers are stripped from the text it keeps, so a stored insight reads on its own.
 5. **Decides** per candidate: close to an existing insight (`RAGDOLL_STEW_MERGE_SIMILARITY`) means reinforce it with new lineage rather than create a near-duplicate; close to a **retired** one means reject it, so what you retired doesn't come back.
 6. **Writes a reflection** to `{DATA_DIR}/insights/reflections/<run_id>.md`: the model's narrative followed by the plain record of the run (every cluster, candidate, decision, and the questions that found nothing).
 
@@ -447,6 +447,7 @@ Runs, clusters and candidates are kept in the insights DB (`stew_runs`, `stew_cl
 | `RAGDOLL_STEW_LOOKBACK_DAYS` | `30` | Query history read on the first run |
 | `RAGDOLL_STEW_MAX_CHUNKS` | `25` | Passages given to the model per cluster |
 | `RAGDOLL_STEW_MIN_SUPPORT` | `2` | Passages an insight must cite |
+| `RAGDOLL_STEW_MIN_SOURCES` | `2` | Different documents those passages must come from |
 | `RAGDOLL_STEW_MERGE_SIMILARITY` | `0.88` | At or above this, a candidate reinforces instead of creating |
 
 ## Review web app

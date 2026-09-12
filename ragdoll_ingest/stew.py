@@ -215,7 +215,10 @@ def _format_prompt(
         "the kind of question being asked. Quality matters far more than quantity.\n\n"
         "Rules:\n"
         f"- Cite the passages that support each insight by their [number]. At least {config.STEW_MIN_SUPPORT} "
-        "distinct passages are required. Never cite a number that is not listed below.\n"
+        f"distinct passages from at least {config.STEW_MIN_SOURCES} different documents are required; an insight "
+        "that only restates one document is not worth recording. Never cite a number that is not listed below.\n"
+        "- Write the statement, question and rationale so they stand on their own: name the idea or the document, "
+        "never passage numbers, which mean nothing outside this prompt. The numbers belong only in supports.\n"
         "- Do not restate an existing insight. If your point only reinforces one, put its id in builds_on and make "
         "the statement about what is new.\n"
         "- Do not restate a rejected statement.\n"
@@ -361,17 +364,43 @@ def _candidate_supports(item: dict[str, Any]) -> list[int]:
     return []
 
 
+_PASSAGE_REF_RE = re.compile(
+    r"""\s*\(?\s*(?:see\s+|per\s+|from\s+)?passages?\s*\[?\d+\]?(?:\s*(?:,|and|&)\s*\[?\d+\]?)*\s*\)?""",
+    re.IGNORECASE,
+)
+_BARE_REF_RE = re.compile(r"\s*\[\d+(?:\s*,\s*\d+)*\]")
+
+
+def _strip_passage_refs(text: str | None) -> str | None:
+    """Remove "(Passage [17])" and bare "[17]" citations from prose.
+
+    The numbers only mean something inside the prompt that listed them; an insight has to read on its own
+    months later. The citations themselves are kept as lineage, not as text.
+    """
+    if not text:
+        return text
+    out = _PASSAGE_REF_RE.sub(" ", text)
+    out = _BARE_REF_RE.sub("", out)
+    out = re.sub(r"\s{2,}", " ", out)
+    out = re.sub(r"\s+([,.;:)])", r"\1", out)
+    out = re.sub(r"\(\s*\)", "", out)
+    return out.strip() or None
+
+
 def _validate_candidates(
     raw: dict[str, Any],
     evidence: list[dict[str, Any]],
     min_support: int,
+    min_sources: int = 1,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Split the model's proposals into ones that are properly grounded and ones to reject (with a reason).
 
-    The grounding check is what keeps the collection from filling with plausible-sounding inventions: a claim
-    has to point at passages that were actually in front of the model.
+    Two checks keep the collection honest. The claim has to point at passages that were actually in front of
+    the model, which catches inventions. And it has to draw on at least min_sources different documents, which
+    is what separates a synthesized insight from a restatement of one document RAGDoll already retrieves.
     """
     valid_ns = {e["n"] for e in evidence}
+    source_by_n = {e["n"]: e["source_path"] for e in evidence}
     accepted: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
     for item in _candidate_list(raw)[: MAX_CANDIDATES_PER_CLUSTER * 2]:
@@ -391,7 +420,24 @@ def _validate_candidates(
                 "decision_reason": f"cited {len(cited)} passage(s); {min_support} required",
             })
             continue
-        accepted.append({**item, "statement": statement, "supports": cited})
+        sources = {source_by_n[n] for n in cited}
+        if len(sources) < min_sources:
+            rejected.append({
+                **item,
+                "statement": statement,
+                "decision_reason": (
+                    f"cited {len(cited)} passage(s) from {len(sources)} document(s); {min_sources} required "
+                    "(an insight should connect sources, not restate one)"
+                ),
+            })
+            continue
+        accepted.append({
+            **item,
+            "statement": _strip_passage_refs(statement),
+            "rationale": _strip_passage_refs(item.get("rationale")),
+            "question": _strip_passage_refs(item.get("question")),
+            "supports": cited,
+        })
         if len(accepted) >= MAX_CANDIDATES_PER_CLUSTER:
             break
     return accepted, rejected
@@ -517,7 +563,9 @@ def run_stew(
                 continue
             cluster_summary["notes"] = (raw.get("notes") or "").strip() or None
 
-            accepted, rejected = _validate_candidates(raw, evidence, config.STEW_MIN_SUPPORT)
+            accepted, rejected = _validate_candidates(
+                raw, evidence, config.STEW_MIN_SUPPORT, config.STEW_MIN_SOURCES
+            )
             evidence_by_n = {e["n"]: e for e in evidence}
             statement_embs = embed([c["statement"] for c in accepted], group=INSIGHTS_GROUP) if accepted else []
 

@@ -135,6 +135,9 @@ STEW_LOOKBACK_DAYS = int(get_env("RAGDOLL_STEW_LOOKBACK_DAYS") or "30")
 STEW_MAX_CHUNKS = int(get_env("RAGDOLL_STEW_MAX_CHUNKS") or "25")
 # An insight must cite at least this many document passages
 STEW_MIN_SUPPORT = int(get_env("RAGDOLL_STEW_MIN_SUPPORT") or "2")
+# ...from at least this many different documents, so automatic insights connect sources instead of
+# restating one. A person asserting a single-source insight in chat is not held to this.
+STEW_MIN_SOURCES = int(get_env("RAGDOLL_STEW_MIN_SOURCES") or "2")
 # A candidate this close to an existing insight reinforces it instead of creating a near-duplicate
 STEW_MERGE_SIMILARITY = float(get_env("RAGDOLL_STEW_MERGE_SIMILARITY") or "0.88")
 
