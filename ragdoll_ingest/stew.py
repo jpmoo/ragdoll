@@ -25,6 +25,7 @@ from .action_log import log as action_log
 from .embedder import cosine_similarity, embed
 from .insights import (
     INSIGHTS_GROUP,
+    list_guidelines,
     _connect_insights,
     create_insight,
     find_similar_insights,
@@ -136,6 +137,25 @@ def _lookback_start() -> str:
     return (datetime.now(timezone.utc) - timedelta(days=config.STEW_LOOKBACK_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _human_changes_since(since: str) -> list[dict[str, Any]]:
+    """Insight changes a person made since `since`, so the reflection can account for them."""
+    conn = _connect_insights()
+    try:
+        rows = conn.execute(
+            "SELECT r.ts, r.actor, r.action, r.reason, i.id, i.statement FROM insight_revisions r "
+            "JOIN insights i ON i.id = r.insight_id "
+            "WHERE r.actor IN ('chat', 'user') AND r.ts >= ? ORDER BY r.id",
+            (since,),
+        ).fetchall()
+        return [
+            {"ts": r["ts"], "actor": r["actor"], "action": r["action"], "reason": r["reason"],
+             "insight_id": r["id"], "statement": r["statement"][:160]}
+            for r in rows
+        ]
+    finally:
+        conn.close()
+
+
 def _cluster_queries(queries: list[dict[str, Any]], threshold: float) -> list[list[dict[str, Any]]]:
     """Group queries by embedding similarity: a query joins the cluster holding the most similar question.
 
@@ -212,6 +232,7 @@ def _format_prompt(
     evidence: list[dict[str, Any]],
     existing: list[dict[str, Any]],
     rejected: list[dict[str, Any]],
+    guidelines: list[dict[str, Any]] | None = None,
 ) -> str:
     questions = "\n".join(f"- {m['prompt']} ({m['ts']} UTC)" for m in members)
     passages = "\n\n".join(
@@ -223,8 +244,11 @@ def _format_prompt(
         "\n".join(f"- {i['statement']} — rejected because: {i['status_reason'] or 'no reason recorded'}" for i in rejected)
         or "- (none)"
     )
+    standing = "\n".join(f"- {g['text']}" for g in (guidelines or []))
+    standing_block = f"STANDING INSTRUCTIONS FROM THE OWNER (follow these before anything else)\n{standing}\n\n" if standing else ""
     return (
-        "You are RAGDoll's nightly synthesis pass. RAGDoll is a retrieval system over a person's document "
+        standing_block
+        + "You are RAGDoll's nightly synthesis pass. RAGDoll is a retrieval system over a person's document "
         "collections. Below are questions that were asked recently, the passages the search returned for them, "
         "insights already recorded, and statements previously rejected.\n\n"
         "Your job is to propose insights worth remembering: durable claims, grounded in the passages, that answer "
@@ -555,6 +579,7 @@ def run_stew(
     summary: dict[str, Any] = {
         "run_id": run_id, "model": model, "dry_run": not write, "since": since, "last_query_ts": None,
         "n_queries": 0, "clusters": [], "n_created": 0, "n_reinforced": 0, "n_rejected": 0, "n_candidates": 0,
+        "guidelines": [], "human_changes": [],
         "gaps": [], "reflection_path": None, "status": "ok", "error": None,
     }
 
@@ -568,6 +593,11 @@ def run_stew(
         # Questions that found nothing are gaps in the collections, and belong in the reflection
         summary["gaps"] = [{"prompt": q["prompt"], "ts": q["ts"]} for q in queries if not q["result_count"]]
         say(f"{len(queries)} queries since {since}")
+
+        guidelines = list_guidelines()
+        summary["guidelines"] = [g["text"] for g in guidelines]
+        # What the owner changed since the last run belongs in tonight's account of itself
+        summary["human_changes"] = _human_changes_since(since)
 
         clusters = _cluster_queries(queries, config.STEW_CLUSTER_THRESHOLD)
         clusters = [c for c in clusters if len(c) >= config.STEW_MIN_QUERIES]
@@ -595,7 +625,7 @@ def run_stew(
                 centroid, statuses=("retired", "superseded"), top_k=MAX_REJECTED_INSIGHTS, min_similarity=0.4
             )
             say(f"cluster '{label}': {len(members)} queries, {len(evidence)} passages -> {model}")
-            raw = _call_model(_format_prompt(label, members, evidence, existing, rejected_before), model)
+            raw = _call_model(_format_prompt(label, members, evidence, existing, rejected_before, guidelines), model)
             if raw is None:
                 cluster_summary["outcome"] = "model_failed"
                 cluster_summary["notes"] = "the insight model did not return usable JSON"
@@ -751,12 +781,15 @@ def _reflection_prompt(summary: dict[str, Any]) -> str:
             for c in summary["clusters"]
         ],
         "questions_that_found_nothing": [g["prompt"] for g in summary["gaps"]],
+        "standing_instructions": summary.get("guidelines") or [],
+        "changes_the_owner_made_since_the_last_run": summary.get("human_changes") or [],
     }
     return (
         "You are writing the nightly reflection for RAGDoll, a retrieval system that builds insights from how its "
         "document collections get used. Below is the record of what tonight's run actually did.\n\n"
         "Write it up in markdown for the person who owns the collections, in these sections:\n"
         "## What I looked at\n## How the thinking went\n## What I concluded\n## What I set aside\n## Gaps\n\n"
+        "If the owner changed insights since the last run, or has standing instructions, say how they shaped tonight. "
         "Write in the first person as the process that just ran (\"I read\", \"I set aside\"), not about \"the model\". "
         "Describe only what the record shows. Do not invent findings, and name the documents and themes it names. "
         "Where two candidates are close (see closest_other_candidate_similarity), say plainly whether they are "

@@ -141,6 +141,16 @@ STEW_MIN_SOURCES = int(get_env("RAGDOLL_STEW_MIN_SOURCES") or "2")
 # A candidate this close to an existing insight reinforces it instead of creating a near-duplicate
 STEW_MERGE_SIMILARITY = float(get_env("RAGDOLL_STEW_MERGE_SIMILARITY") or "0.88")
 
+# Insight chat: talking with the collection to correct and steer it. Needs a model that calls tools reliably.
+CHAT_MODEL = get_env("RAGDOLL_CHAT_MODEL") or INSIGHT_MODEL
+CHAT_OLLAMA_HOST = get_env("RAGDOLL_CHAT_OLLAMA_HOST") or INSIGHT_OLLAMA_HOST
+CHAT_NUM_CTX = int(get_env("RAGDOLL_CHAT_NUM_CTX") or "32768")
+CHAT_TIMEOUT = int(get_env("RAGDOLL_CHAT_TIMEOUT") or "600")
+# Tool calls the model may make in one turn before it has to answer
+CHAT_MAX_STEPS = int(get_env("RAGDOLL_CHAT_MAX_STEPS") or "12")
+# Earlier messages replayed to the model each turn
+CHAT_HISTORY_MESSAGES = int(get_env("RAGDOLL_CHAT_HISTORY_MESSAGES") or "24")
+
 # API server
 API_PORT = int(get_env("RAGDOLL_API_PORT") or "9042")
 

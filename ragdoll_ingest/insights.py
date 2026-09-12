@@ -98,6 +98,15 @@ def init_insights_db(conn: sqlite3.Connection) -> None:
             session_id TEXT
         );
         CREATE INDEX IF NOT EXISTS ix_insight_revisions_insight ON insight_revisions(insight_id);
+
+        CREATE TABLE IF NOT EXISTS insight_guidelines (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            text TEXT NOT NULL,
+            actor TEXT NOT NULL,
+            active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            removed_at TEXT
+        );
     """)
 
 
@@ -575,6 +584,80 @@ def get_insights_by_source_paths(source_paths: list[str]) -> dict[str, dict[str,
         return out
     finally:
         conn.close()
+
+
+def add_guideline(text: str, *, actor: str = "chat") -> dict[str, Any]:
+    """Add a standing rule for the nightly run (e.g. "don't record insights about scheduling logistics").
+
+    Guidelines steer what gets generated at all, which is the only correction that scales past fixing
+    insights one at a time.
+    """
+    text = (text or "").strip()
+    if not text:
+        raise InsightError("A guideline needs text")
+    conn = _connect_insights()
+    try:
+        cur = conn.execute(
+            "INSERT INTO insight_guidelines (text, actor, created_at) VALUES (?, ?, ?)", (text, actor, _now())
+        )
+        conn.commit()
+        return {"id": cur.lastrowid, "text": text, "actor": actor}
+    finally:
+        conn.close()
+
+
+def list_guidelines(active_only: bool = True) -> list[dict[str, Any]]:
+    conn = _connect_insights()
+    try:
+        sql = "SELECT * FROM insight_guidelines"
+        if active_only:
+            sql += " WHERE active = 1"
+        return [dict(r) for r in conn.execute(sql + " ORDER BY id").fetchall()]
+    finally:
+        conn.close()
+
+
+def remove_guideline(guideline_id: int) -> dict[str, Any]:
+    """Deactivate a guideline. Kept on record like everything else here."""
+    conn = _connect_insights()
+    try:
+        row = conn.execute("SELECT * FROM insight_guidelines WHERE id = ?", (guideline_id,)).fetchone()
+        if not row:
+            raise InsightError(f"Guideline {guideline_id} not found")
+        conn.execute(
+            "UPDATE insight_guidelines SET active = 0, removed_at = ? WHERE id = ?", (_now(), guideline_id)
+        )
+        conn.commit()
+        return {**dict(row), "active": 0}
+    finally:
+        conn.close()
+
+
+def revert_last_edit(
+    insight_id: int,
+    *,
+    actor: str,
+    reason: str | None = None,
+    session_id: str | None = None,
+) -> dict[str, Any]:
+    """Put an insight's text back the way it was before the last edit.
+
+    The revision history stores the fields each update changed, so undo is just applying that "before" again.
+    """
+    conn = _connect_insights()
+    try:
+        row = conn.execute(
+            "SELECT before FROM insight_revisions WHERE insight_id = ? AND action = 'update' ORDER BY id DESC LIMIT 1",
+            (insight_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row or not row["before"]:
+        raise InsightError(f"Insight {insight_id} has no edit to undo")
+    before = json.loads(row["before"])
+    return update_insight(
+        insight_id, before, actor=actor, reason=reason or "Reverted the previous edit", session_id=session_id
+    )
 
 
 _SECTION_HEADERS = {

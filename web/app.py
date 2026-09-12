@@ -21,7 +21,9 @@ from ragdoll_ingest.config import get_env
 from ragdoll_ingest.embedder import build_text_to_embed, embed
 from ragdoll_ingest.chunk_csv import CHUNK_CSV_HEADERS
 from ragdoll_ingest.csv_import import parse_csv_bytes, run_csv_import
-from ragdoll_ingest.insights import INSIGHTS_GROUP
+from ragdoll_ingest.chat import ask, get_messages, list_sessions, new_session, opening_context
+from ragdoll_ingest.insights import INSIGHTS_GROUP, get_insight, list_guidelines, list_insights
+from ragdoll_ingest.stew import list_runs, read_reflection
 from ragdoll_ingest.interpreters import extract_chunk_semantic_labels
 from ragdoll_ingest.storage import (
     _connect,
@@ -550,6 +552,77 @@ def api_delete_chunk(group: str, chunk_id: int):
         return {"ok": True}
     finally:
         conn.close()
+
+
+# --- Insight chat ---
+
+class ChatMessage(BaseModel):
+    text: str
+
+
+class ChatSessionCreate(BaseModel):
+    title: str | None = None
+
+
+@app.get("/api/chat/context")
+def api_chat_context():
+    """What stands right now: recent runs, latest insights, standing instructions."""
+    return {"context": opening_context(), "guidelines": list_guidelines()}
+
+
+@app.get("/api/chat/sessions")
+def api_chat_sessions():
+    return {"sessions": list_sessions()}
+
+
+@app.post("/api/chat/sessions")
+def api_chat_session_create(body: ChatSessionCreate):
+    return {"session_id": new_session(body.title)}
+
+
+@app.get("/api/chat/sessions/{session_id}/messages")
+def api_chat_messages(session_id: int):
+    return {"messages": get_messages(session_id)}
+
+
+@app.post("/api/chat/sessions/{session_id}/messages")
+def api_chat_send(session_id: int, body: ChatMessage):
+    """One turn. Runs the model and its tool calls, so it can take a while on a large model."""
+    text = (body.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Empty message")
+    try:
+        return ask(session_id, text)
+    except Exception as e:
+        logger.exception("Chat turn failed")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.get("/api/insights")
+def api_insights(status: str = "active", limit: int = 50):
+    """Insights for the chat page sidebar."""
+    return {"insights": list_insights(status=None if status == "all" else status, limit=limit)}
+
+
+@app.get("/api/insights/{insight_id}")
+def api_insight(insight_id: int):
+    try:
+        return get_insight(insight_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+
+@app.get("/api/runs")
+def api_runs(limit: int = 10):
+    return {"runs": list_runs(limit)}
+
+
+@app.get("/api/runs/{run_id}/reflection")
+def api_reflection(run_id: str):
+    text = read_reflection(run_id)
+    if text is None:
+        raise HTTPException(status_code=404, detail=f"No reflection for run {run_id}")
+    return {"run_id": run_id, "reflection": text}
 
 
 # --- Static frontend ---

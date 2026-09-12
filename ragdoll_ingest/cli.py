@@ -11,6 +11,9 @@ from .csv_import import parse_csv_bytes, run_csv_import
 from .insights import (
     INSIGHTS_GROUP,
     ORIGINS,
+    add_guideline,
+    list_guidelines,
+    remove_guideline,
     InsightError,
     get_insight,
     list_insights,
@@ -18,6 +21,7 @@ from .insights import (
     restore_insight,
     retire_insight,
 )
+from .chat import ask, list_sessions, new_session, opening_context
 from .query_log import get_query, recent_queries
 from .stew import get_run, list_runs, read_reflection, run_stew
 from .storage import (
@@ -345,6 +349,23 @@ def cmd_insights(args: argparse.Namespace) -> int:
                 return 1
             print(text)
             return 0
+        if args.insights_command == "guidelines":
+            if args.add:
+                g = add_guideline(args.add, actor="user")
+                print(f"Added guideline {g['id']}: {g['text']}")
+                return 0
+            if args.remove:
+                g = remove_guideline(args.remove)
+                print(f"Removed guideline {g['id']}: {g['text']}")
+                return 0
+            rows = list_guidelines(active_only=not args.all)
+            if not rows:
+                print("No standing instructions. Add one with --add \"...\" (the nightly run follows them).")
+                return 0
+            for g in rows:
+                state = "" if g["active"] else "  (removed)"
+                print(f"{g['id']:<4} {g['text']}{state}")
+            return 0
         if args.insights_command == "migrate-memory":
             r = migrate_memory_collection(archive=not args.no_archive, dry_run=args.dry_run)
             if r["found"] == 0:
@@ -371,6 +392,40 @@ def cmd_insights(args: argparse.Namespace) -> int:
         print(f"Error: {e}", file=sys.stderr)
         return 1
     return 1
+
+
+def cmd_chat(args: argparse.Namespace) -> int:
+    """Talk with the insights collection: ask why something is recorded, correct it, or set standing rules."""
+    if args.list:
+        sessions = list_sessions()
+        if not sessions:
+            print("No chat sessions yet.")
+            return 0
+        print(f"{'ID':<6} {'Last active (UTC)':<20} {'Turns':<7} Title")
+        print("-" * 80)
+        for s in sessions:
+            print(f"{s['id']:<6} {s['last_active']:<20} {s['messages']:<7} {s['title'] or ''}")
+        return 0
+
+    session_id = args.session or new_session()
+    print(opening_context())
+    print(f"\nSession {session_id}. Type your message; 'exit' or Ctrl-D to leave.\n")
+    while True:
+        try:
+            text = input("you> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+        if not text:
+            continue
+        if text.lower() in ("exit", "quit"):
+            break
+        out = ask(session_id, text, model=args.model, progress=lambda m: print(f"  · {m}"))
+        print(f"\n{out['reply']}\n")
+        for a in out["actions"]:
+            print(f"  [changed] {a['tool']}")
+    print(f"Session {session_id} saved.")
+    return 0
 
 
 def cmd_queries(args: argparse.Namespace) -> int:
@@ -529,6 +584,15 @@ def main() -> int:
     insights_reflection = insights_sub.add_parser("reflection", help="Print a run's reflection")
     insights_reflection.add_argument("run_id")
 
+    insights_guidelines = insights_sub.add_parser(
+        "guidelines",
+        help="Standing instructions the nightly run follows",
+        description="List, add or remove the standing instructions given to the insight model on every run.",
+    )
+    insights_guidelines.add_argument("--add", metavar="TEXT", help="Add a standing instruction")
+    insights_guidelines.add_argument("--remove", metavar="ID", type=int, help="Deactivate one")
+    insights_guidelines.add_argument("--all", action="store_true", help="Include removed ones")
+
     insights_migrate = insights_sub.add_parser(
         "migrate-memory",
         help="Copy the legacy memory collection into insights, then archive it",
@@ -536,6 +600,19 @@ def main() -> int:
     )
     insights_migrate.add_argument("--dry-run", action="store_true", help="Report what would be migrated without writing")
     insights_migrate.add_argument("--no-archive", action="store_true", help="Leave the memory collection in place")
+
+    # chat command
+    chat_parser = subparsers.add_parser(
+        "chat",
+        help="Talk with the insights collection (correct, discuss, set standing rules)",
+        description=(
+            "A conversation with the insights RAGDoll has built: ask why one exists, correct or retire it, or add "
+            "a standing instruction for future runs. Changes are recorded as revisions and can be undone."
+        ),
+    )
+    chat_parser.add_argument("--session", type=int, help="Continue a previous session")
+    chat_parser.add_argument("--model", help=f"Override RAGDOLL_CHAT_MODEL (currently {config.CHAT_MODEL})")
+    chat_parser.add_argument("--list", action="store_true", help="List past sessions instead of chatting")
 
     # queries command
     queries_parser = subparsers.add_parser(
@@ -563,6 +640,8 @@ def main() -> int:
         return cmd_insights(args)
     elif args.command == "queries":
         return cmd_queries(args)
+    elif args.command == "chat":
+        return cmd_chat(args)
     else:
         parser.print_help()
         return 1

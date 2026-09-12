@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RAGDoll – Insight chat</title>
+  <style>
+    :root {
+      --bg: #0f0f12;
+      --surface: #18181c;
+      --border: #2a2a30;
+      --text: #e4e4e7;
+      --muted: #71717a;
+      --accent: #a78bfa;
+      --accent-hover: #c4b5fd;
+      --danger: #f87171;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "DM Sans", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      line-height: 1.5;
+      display: grid;
+      grid-template-rows: auto 1fr;
+    }
+    header {
+      padding: 0.75rem 1rem;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+    header h1 { margin: 0; font-size: 1.1rem; font-weight: 600; }
+    header a { color: var(--accent); text-decoration: none; font-size: 0.9rem; }
+    header a:hover { color: var(--accent-hover); }
+    select, button, textarea, input {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 0.4rem 0.6rem;
+      border-radius: 6px;
+      font-size: 0.9rem;
+      font-family: inherit;
+    }
+    button { cursor: pointer; }
+    button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+    button:disabled { opacity: 0.5; cursor: default; }
+    .layout { display: grid; grid-template-columns: 1fr 340px; min-height: 0; }
+    @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } aside { display: none; } }
+    main { display: grid; grid-template-rows: 1fr auto; min-height: 0; }
+    #thread { overflow-y: auto; padding: 1rem 1.25rem; display: flex; flex-direction: column; gap: 0.85rem; }
+    .msg { max-width: 62ch; padding: 0.6rem 0.85rem; border-radius: 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .msg.user { align-self: flex-end; background: #26263a; border: 1px solid var(--border); }
+    .msg.assistant { align-self: flex-start; background: var(--surface); border: 1px solid var(--border); }
+    .msg.tool {
+      align-self: flex-start; background: transparent; border: 1px dashed var(--border);
+      color: var(--muted); font-size: 0.82rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      max-width: 70ch;
+    }
+    .msg.changed { border-color: var(--accent); color: var(--accent); }
+    .msg strong { color: var(--accent); }
+    .composer { border-top: 1px solid var(--border); padding: 0.75rem 1rem; display: flex; gap: 0.6rem; background: var(--surface); }
+    .composer textarea { flex: 1; resize: vertical; min-height: 3rem; max-height: 12rem; }
+    aside { border-left: 1px solid var(--border); background: var(--surface); overflow-y: auto; padding: 0.9rem; }
+    aside h2 { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 1.2rem 0 0.5rem; }
+    aside h2:first-child { margin-top: 0; }
+    .card {
+      border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem 0.6rem; margin-bottom: 0.45rem;
+      cursor: pointer; font-size: 0.86rem; background: var(--bg);
+    }
+    .card:hover { border-color: var(--accent); }
+    .card .meta { color: var(--muted); font-size: 0.75rem; margin-top: 0.2rem; }
+    .badge { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+    .badge.retired { color: var(--danger); }
+    .empty { color: var(--muted); font-size: 0.86rem; }
+    #status { color: var(--muted); font-size: 0.86rem; padding: 0 1.25rem 0.5rem; }
+    dialog {
+      background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 10px;
+      max-width: 70ch; width: 90%; max-height: 80vh; overflow: auto; white-space: pre-wrap;
+    }
+    dialog::backdrop { background: rgba(0,0,0,0.6); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Insight chat</h1>
+    <select id="sessionSelect" title="Conversation"></select>
+    <button id="newSessionBtn">New conversation</button>
+    <a href="/index.html">← Review collections</a>
+  </header>
+
+  <div class="layout">
+    <main>
+      <div id="thread"></div>
+      <div id="status"></div>
+      <form class="composer" id="composer">
+        <textarea id="input" placeholder="Ask why an insight exists, correct it, or set a standing rule…" autofocus></textarea>
+        <button type="submit" id="sendBtn">Send</button>
+      </form>
+    </main>
+
+    <aside>
+      <h2>Where things stand</h2>
+      <div id="context" class="empty">Loading…</div>
+      <h2>Insights</h2>
+      <div id="insights" class="empty">Loading…</div>
+      <h2>Recent runs</h2>
+      <div id="runs" class="empty">Loading…</div>
+    </aside>
+  </div>
+
+  <dialog id="viewer"><div id="viewerBody"></div></dialog>
+
+  <script>
+    const API = '/api';
+    let sessionId = null;
+    let polling = null;
+
+    const qs = (s) => document.querySelector(s);
+    const esc = (s) => (s || '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const bold = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+
+    async function api(path, opts) {
+      const r = await fetch(API + path, opts);
+      if (!r.ok) throw new Error((await r.text()) || r.statusText);
+      return r.json();
+    }
+
+    function renderMessages(messages) {
+      const thread = qs('#thread');
+      thread.innerHTML = '';
+      for (const m of messages) {
+        const div = document.createElement('div');
+        if (m.role === 'tool') {
+          div.className = 'msg tool';
+          const args = m.tool_args ? JSON.parse(m.tool_args) : {};
+          const summary = Object.entries(args).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(', ');
+          div.textContent = `${m.tool_name}(${summary.slice(0, 160)})`;
+          if (['create_insight', 'edit_insight', 'retire_insight', 'restore_insight', 'undo_last_edit',
+               'add_guideline', 'remove_guideline'].includes(m.tool_name)) {
+            div.classList.add('changed');
+          }
+        } else {
+          div.className = 'msg ' + m.role;
+          div.innerHTML = bold(m.content || '');
+        }
+        thread.appendChild(div);
+      }
+      thread.scrollTop = thread.scrollHeight;
+    }
+
+    async function loadMessages() {
+      if (!sessionId) return;
+      const { messages } = await api(`/chat/sessions/${sessionId}/messages`);
+      renderMessages(messages);
+    }
+
+    async function loadSessions(selectId) {
+      const { sessions } = await api('/chat/sessions');
+      const sel = qs('#sessionSelect');
+      sel.innerHTML = '';
+      for (const s of sessions) {
+        const opt = document.createElement('option');
+        opt.value = s.id;
+        opt.textContent = `${s.title || 'Conversation ' + s.id} · ${s.last_active.slice(0, 16)} · ${s.messages} turns`;
+        sel.appendChild(opt);
+      }
+      if (selectId) sel.value = String(selectId);
+      if (!sel.value && sessions.length) sel.value = String(sessions[0].id);
+      sessionId = sel.value ? Number(sel.value) : null;
+    }
+
+    async function loadSidebar() {
+      const { context } = await api('/chat/context');
+      qs('#context').textContent = context;
+      qs('#context').className = '';
+
+      const { insights } = await api('/insights?status=all&limit=40');
+      const box = qs('#insights');
+      box.className = '';
+      box.innerHTML = insights.length ? '' : '<div class="empty">None yet.</div>';
+      for (const i of insights) {
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.innerHTML = `<div>${esc(i.topic || i.statement.slice(0, 70))}</div>
+          <div class="meta"><span class="badge ${i.status !== 'active' ? 'retired' : ''}">${i.status} · ${i.origin}</span> · id ${i.id}</div>`;
+        card.onclick = () => { qs('#input').value = `Tell me about insight ${i.id} — where did it come from?`; qs('#input').focus(); };
+        box.appendChild(card);
+      }
+
+      const { runs } = await api('/runs?limit=8');
+      const rbox = qs('#runs');
+      rbox.className = '';
+      rbox.innerHTML = runs.length ? '' : '<div class="empty">No runs yet.</div>';
+      for (const r of runs) {
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.innerHTML = `<div>${esc(r.run_id)}</div>
+          <div class="meta">${r.dry_run ? 'dry run' : 'wrote'} · ${r.n_created} created · ${r.n_rejected} rejected</div>`;
+        card.onclick = async () => {
+          try {
+            const { reflection } = await api(`/runs/${r.run_id}/reflection`);
+            qs('#viewerBody').textContent = reflection;
+            qs('#viewer').showModal();
+          } catch (e) { alert('No reflection for that run.'); }
+        };
+        rbox.appendChild(card);
+      }
+    }
+
+    async function send(text) {
+      qs('#sendBtn').disabled = true;
+      qs('#status').textContent = 'Thinking… (a large model can take a minute)';
+      // Tool calls are saved as they run, so polling shows progress during the turn
+      polling = setInterval(loadMessages, 2000);
+      try {
+        await api(`/chat/sessions/${sessionId}/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text }),
+        });
+      } catch (e) {
+        qs('#status').textContent = 'Failed: ' + e.message;
+      } finally {
+        clearInterval(polling);
+        qs('#sendBtn').disabled = false;
+        await loadMessages();
+        await loadSidebar();
+        if (qs('#status').textContent.startsWith('Thinking')) qs('#status').textContent = '';
+      }
+    }
+
+    qs('#composer').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const input = qs('#input');
+      const text = input.value.trim();
+      if (!text || !sessionId) return;
+      input.value = '';
+      await send(text);
+    });
+
+    qs('#input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) qs('#composer').requestSubmit();
+    });
+
+    qs('#sessionSelect').addEventListener('change', async (e) => {
+      sessionId = Number(e.target.value);
+      await loadMessages();
+    });
+
+    qs('#newSessionBtn').addEventListener('click', async () => {
+      const { session_id } = await api('/chat/sessions', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+      });
+      await loadSessions(session_id);
+      await loadMessages();
+    });
+
+    qs('#viewer').addEventListener('click', (e) => { if (e.target.id === 'viewer') qs('#viewer').close(); });
+
+    (async function start() {
+      await loadSessions();
+      if (!sessionId) {
+        const { session_id } = await api('/chat/sessions', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+        });
+        await loadSessions(session_id);
+      }
+      await loadMessages();
+      await loadSidebar();
+    })();
+  </script>
+</body>
+</html>

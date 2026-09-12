@@ -429,6 +429,21 @@ What a run does:
 
 Runs, clusters and candidates are kept in the insights DB (`stew_runs`, `stew_clusters`, `stew_candidates`), so an insight can always be traced back to the questions and passages behind it.
 
+### Correcting insights: the chat
+
+`ragdoll chat` (terminal) or the **Insight chat** page in the review app is how insights get fixed. It reads the same record the nightly run wrote and can act on it:
+
+```bash
+ragdoll chat                 # --session N to continue one, --list to see past conversations
+ragdoll insights guidelines  # --add "..." / --remove ID
+```
+
+The chat can search insights and the source documents, open an insight with its full lineage and revision history, read a run's reflection, and then **create, edit, retire, restore or undo**. It acts when you clearly ask rather than proposing changes for approval, because nothing it does is destructive: every change is a revision with your reason, retiring keeps the insight, and `undo_last_edit` reverses an edit. Changes are made as the actor `chat`, which pins the insight so automated runs leave it alone.
+
+**Guidelines** are the other half. When something is wrong as a pattern rather than as one insight ("stop recording insights about student agency"), the chat adds a standing instruction. Those lead the prompt on every future run, so they change what gets generated at all. Your recent changes and the standing instructions are both given to the next run, and its reflection accounts for them.
+
+The chat needs a model that calls tools reliably; `qwen3.6:35b` and `qwen3.5:122b` both do. Its own lookups are deliberately not written to the query log, so talking about the collection doesn't become material the collection learns from.
+
 **Running it nightly:** `ragdoll-stew.service` (a oneshot) and `ragdoll-stew.timer` run the stew at 03:00. The unit passes `--write`, so insights are created; drop that flag in the unit to keep getting reflections without writes.
 
 ```bash
@@ -462,6 +477,12 @@ Each morning, `ragdoll insights runs` shows what happened and `ragdoll insights 
 | `RAGDOLL_STEW_MIN_SUPPORT` | `2` | Passages an insight must cite |
 | `RAGDOLL_STEW_MIN_SOURCES` | `2` | Different documents those passages must come from |
 | `RAGDOLL_STEW_MERGE_SIMILARITY` | `0.88` | At or above this, a candidate reinforces instead of creating |
+| `RAGDOLL_CHAT_MODEL` | `RAGDOLL_INSIGHT_MODEL` | Model for the insight chat (must support tool calling) |
+| `RAGDOLL_CHAT_OLLAMA_HOST` | `RAGDOLL_INSIGHT_OLLAMA_HOST` | Host for the chat model |
+| `RAGDOLL_CHAT_NUM_CTX` | `32768` | Context window for the chat model |
+| `RAGDOLL_CHAT_TIMEOUT` | `600` | Seconds per chat model call |
+| `RAGDOLL_CHAT_MAX_STEPS` | `12` | Tool calls allowed in one turn |
+| `RAGDOLL_CHAT_HISTORY_MESSAGES` | `24` | Earlier messages replayed each turn |
 
 ## Review web app
 
@@ -480,7 +501,7 @@ A separate web service in `web/` lets you review **samples (chunks) side-by-side
   sudo systemctl enable --now ragdoll-web
   ```
   The unit uses the same env files as the API (`/opt/ragdoll/env.ragdoll`, `/etc/default/ragdoll-ingest`) and the same venv at `/opt/ragdoll/.venv/bin/python`. Override with `systemctl edit ragdoll-web` if needed.
-- **URL:** Open `http://localhost:9043` (or your host:9043) in a browser.
+- **URL:** Open `http://localhost:9043` (or your host:9043) in a browser. The **Insight chat** link in the header opens `/chat.html`.
 
 **Features:**
 - Choose a **group** and **source**; the left panel shows the source document (PDF/image inline; other types open in a new tab). PDFs are **not** converted to scans—the file on disk is the original. PDFs open in the **browser’s native viewer** (iframe) so copy/paste works; use the “Page” filter and type the page number to see samples for that page.
