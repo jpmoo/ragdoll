@@ -333,6 +333,8 @@ def cmd_insights(args: argparse.Namespace) -> int:
                         print(f"      sources: {', '.join(sources)}")
                     if cand["trace"].get("weak_spots"):
                         print(f"      weak spots: {cand['trace']['weak_spots']}")
+                    if cand["trace"].get("closest_sibling"):
+                        print(f"      overlaps (similarity {cand['trace']['closest_sibling_similarity']}): {cand['trace']['closest_sibling']}")
             print(f"\nReflection: {run['reflection_path']}")
             return 0
         if args.insights_command == "reflection":

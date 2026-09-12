@@ -463,6 +463,24 @@ def _lineage_for(candidate: dict[str, Any], evidence_by_n: dict[int, dict[str, A
     return lineage
 
 
+def _closest_sibling(
+    embedding: list[float],
+    siblings: list[dict[str, Any]],
+) -> tuple[dict[str, Any] | None, float]:
+    """The most similar candidate already kept in this run, and how similar it is.
+
+    Measured and reported rather than acted on below the near-duplicate threshold: in practice two insights
+    that genuinely overlap score about 0.79 while clearly distinct ones score about 0.76, so a threshold in
+    that range would discard good insights. Overlap is a judgment call for the reflection and the reader.
+    """
+    best, best_sim = None, 0.0
+    for sib in siblings:
+        sim = cosine_similarity(embedding, sib["embedding"])
+        if sim > best_sim:
+            best, best_sim = sib, sim
+    return best, round(best_sim, 4)
+
+
 def _decide(candidate: dict[str, Any], statement_embedding: list[float]) -> tuple[str, int | None, str | None]:
     """Create, reinforce an existing insight, or reject as already rejected before.
 
@@ -536,6 +554,7 @@ def run_stew(
         clusters = clusters[:max_clusters]
         say(f"{len(clusters)} clusters to stew")
 
+        run_siblings: list[dict[str, Any]] = []  # candidates kept so far, to catch restatements within one run
         for members in clusters:
             label = _cluster_label(members)
             evidence, insight_ids_seen = _gather_evidence(members, config.STEW_MAX_CHUNKS)
@@ -570,7 +589,15 @@ def run_stew(
             statement_embs = embed([c["statement"] for c in accepted], group=INSIGHTS_GROUP) if accepted else []
 
             for cand, emb in zip(accepted, statement_embs):
-                decision, target_id, reason = _decide(cand, emb)
+                sibling, sibling_sim = _closest_sibling(emb, run_siblings)
+                if sibling is not None and sibling_sim >= config.STEW_MERGE_SIMILARITY:
+                    # A restatement of something this same run already proposed. Reinforce the sibling if it was
+                    # actually created; the shared code below does the write, so don't do it here too.
+                    decision = "reinforce" if sibling["insight_id"] else "rejected"
+                    target_id = sibling["insight_id"]
+                    reason = f"restates an insight from earlier in this run (similarity {sibling_sim}): {sibling['statement'][:80]}"
+                else:
+                    decision, target_id, reason = _decide(cand, emb)
                 lineage = _lineage_for(cand, evidence_by_n, members)
                 insight_id = None
                 if decision == "create" and write:
@@ -588,6 +615,10 @@ def run_stew(
                     )
                     insight_id = target_id
                 recorded = decision if write else {"create": "would_create", "reinforce": "would_reinforce"}.get(decision, decision)
+                if sibling is not None:
+                    cand = {**cand, "closest_sibling": sibling["statement"][:120], "closest_sibling_similarity": sibling_sim}
+                if decision in ("create", "reinforce"):
+                    run_siblings.append({"embedding": emb, "statement": cand["statement"], "insight_id": insight_id or target_id})
                 cluster_summary["candidates"].append({
                     **cand, "decision": recorded, "decision_reason": reason, "insight_id": insight_id,
                     "supporting_sources": sorted({evidence_by_n[n]["source_name"] for n in cand["supports"] if n in evidence_by_n}),
@@ -650,8 +681,10 @@ def _save_run(run_id: str, summary: dict[str, Any], finished: str) -> None:
             cluster_id = cur.lastrowid
             for cand in c["candidates"]:
                 trace = {
-                    k: cand.get(k) for k in
-                    ("supports", "supporting_sources", "builds_on", "tensions_with", "alternatives_considered", "weak_spots")
+                    k: cand.get(k) for k in (
+                        "supports", "supporting_sources", "builds_on", "tensions_with", "alternatives_considered",
+                        "weak_spots", "closest_sibling", "closest_sibling_similarity",
+                    )
                 }
                 conn.execute(
                     "INSERT INTO stew_candidates (run_id, cluster_id, statement, question, rationale, topic, tags, "
@@ -687,6 +720,8 @@ def _reflection_prompt(summary: dict[str, Any]) -> str:
                         "decision_reason": cand.get("decision_reason"), "sources": cand.get("supporting_sources"),
                         "alternatives_considered": cand.get("alternatives_considered"),
                         "weak_spots": cand.get("weak_spots"), "confidence": cand.get("confidence"),
+                        "closest_other_candidate": cand.get("closest_sibling"),
+                        "closest_other_candidate_similarity": cand.get("closest_sibling_similarity"),
                     }
                     for cand in c["candidates"]
                 ],
@@ -700,7 +735,10 @@ def _reflection_prompt(summary: dict[str, Any]) -> str:
         "document collections get used. Below is the record of what tonight's run actually did.\n\n"
         "Write it up in markdown for the person who owns the collections, in these sections:\n"
         "## What I looked at\n## How the thinking went\n## What I concluded\n## What I set aside\n## Gaps\n\n"
+        "Write in the first person as the process that just ran (\"I read\", \"I set aside\"), not about \"the model\". "
         "Describe only what the record shows. Do not invent findings, and name the documents and themes it names. "
+        "Where two candidates are close (see closest_other_candidate_similarity), say plainly whether they are "
+        "really one insight or two. "
         "Respect the mode: on a dry run say what you would record, never that insights were created. "
         "Be direct and specific; a few hundred words is plenty.\n\n"
         f"RECORD\n{json.dumps(record, indent=2, ensure_ascii=False)}"
@@ -725,6 +763,8 @@ def _fallback_reflection(summary: dict[str, Any]) -> str:
                 lines += [f"  - sources: {', '.join(cand['supporting_sources'])}"]
             if cand.get("confidence") is not None:
                 lines += [f"  - confidence: {cand['confidence']}"]
+            if cand.get("closest_sibling"):
+                lines += [f"  - overlaps (similarity {cand['closest_sibling_similarity']}): {cand['closest_sibling']}"]
         lines += [""]
     if summary["gaps"]:
         lines += ["## Gaps", "", *[f"- {g['prompt']}" for g in summary["gaps"]], ""]
