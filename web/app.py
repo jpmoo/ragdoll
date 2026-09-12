@@ -567,7 +567,7 @@ class ChatSessionCreate(BaseModel):
 @app.get("/api/chat/context")
 def api_chat_context():
     """What stands right now: recent runs, latest insights, standing instructions."""
-    return {"context": opening_context(), "guidelines": list_guidelines()}
+    return {"context": opening_context(), "guidelines": list_guidelines(), "model": config.CHAT_MODEL}
 
 
 @app.get("/api/chat/sessions")

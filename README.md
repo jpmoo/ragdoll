@@ -442,7 +442,7 @@ The chat can search insights and the source documents, open an insight with its 
 
 **Guidelines** are the other half. When something is wrong as a pattern rather than as one insight ("stop recording insights about student agency"), the chat adds a standing instruction. Those lead the prompt on every future run, so they change what gets generated at all. Your recent changes and the standing instructions are both given to the next run, and its reflection accounts for them.
 
-The chat needs a model that calls tools reliably; `qwen3.6:35b` and `qwen3.5:122b` both do. Its own lookups are deliberately not written to the query log, so talking about the collection doesn't become material the collection learns from.
+The chat needs a model that calls tools reliably; `qwen3.6:35b` and `qwen3.5:122b` both do. It defaults to `RAGDOLL_INSIGHT_MODEL`, so set `RAGDOLL_CHAT_MODEL` separately when the nightly model is too slow to talk to — the page header shows which model is answering. In the browser, Enter sends and Shift+Enter starts a new line. Its own lookups are deliberately not written to the query log, so talking about the collection doesn't become material the collection learns from.
 
 **Running it nightly:** `ragdoll-stew.service` (a oneshot) and `ragdoll-stew.timer` run the stew at 03:00. The unit passes `--write`, so insights are created; drop that flag in the unit to keep getting reflections without writes.
 

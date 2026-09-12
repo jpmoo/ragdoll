@@ -92,6 +92,7 @@
     <select id="sessionSelect" title="Conversation"></select>
     <button id="newSessionBtn">New conversation</button>
     <a href="/index.html">← Review collections</a>
+    <span id="modelName" class="badge" style="margin-left:auto"></span>
   </header>
 
   <div class="layout">
@@ -99,7 +100,7 @@
       <div id="thread"></div>
       <div id="status"></div>
       <form class="composer" id="composer">
-        <textarea id="input" placeholder="Ask why an insight exists, correct it, or set a standing rule…" autofocus></textarea>
+        <textarea id="input" placeholder="Ask why an insight exists, correct it, or set a standing rule…  (Enter sends, Shift+Enter for a new line)" autofocus></textarea>
         <button type="submit" id="sendBtn">Send</button>
       </form>
     </main>
@@ -176,7 +177,8 @@
     }
 
     async function loadSidebar() {
-      const { context } = await api('/chat/context');
+      const { context, model } = await api('/chat/context');
+      qs('#modelName').textContent = model ? `model: ${model}` : '';
       qs('#context').textContent = context;
       qs('#context').className = '';
 
@@ -245,7 +247,11 @@
     });
 
     qs('#input').addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) qs('#composer').requestSubmit();
+      // Enter sends; Shift+Enter (or the usual modifiers) inserts a line break
+      if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        qs('#composer').requestSubmit();
+      }
     });
 
     qs('#sessionSelect').addEventListener('change', async (e) => {
