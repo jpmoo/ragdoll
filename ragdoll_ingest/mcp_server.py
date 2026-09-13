@@ -70,7 +70,9 @@ def _make_mcp() -> "FastMCP":
             "RAGDoll gives you semantic search over ingested document collections plus an insights collection: learnings built from how the collections are used. "
             "Use list_collections to discover collections. Use query_rag to search; insights are included by default, even when you name specific collections "
             "(set include_insights=false to leave them out). "
-            "Use submit_insight to contribute a learning (Topic, Tags, Insight, Question, Reasoning, Open questions, Confidence); it is searchable immediately via query_rag."
+            "Use submit_insight to save a learning (Topic, Tags, Insight, Question, Reasoning, Open questions, Confidence); it is searchable immediately. "
+            "Save when the user asks you to. When a conversation reaches a durable conclusion they haven't asked to save, offer to save it rather than saving on your own. "
+            "Pass the passages the insight rests on as sources (collection:chunk_id, from query_rag results) and the query_id of the searches that found them, so the insight can be traced to the documents."
         ),
         host=config.MCP_HOST,
         port=config.MCP_PORT,
@@ -100,7 +102,7 @@ def _make_mcp() -> "FastMCP":
         """Semantic similarity search over one or more RAGDoll document collections. Returns matching document chunks sorted by relevance.
         When synthesize=true, RAGDoll also uses its LLM to turn prompt+history+chunks into instructions or an answer (research-assistant style).
 
-        Response: "results" lists the matching chunks in relevance order (group, source_name, source_path, chunk_id, text,
+        Response: "query_id" identifies this search (pass it to submit_insight). "results" lists the matching chunks in relevance order (group, source_name, source_path, chunk_id, text,
         similarity, chunk_role, page, context_index/context_total). "documents" has one entry per source, ordered by its best
         chunk: source_summary, source_url, sample_count, the chunk_ids it contributed, and for the insights collection an
         "insight" object. Each chunk's text and each document's summary appear once. Chunk ids are unique only within a collection, so join on group + chunk_id.
@@ -155,12 +157,17 @@ def _make_mcp() -> "FastMCP":
 
         return _compact_query_result(result)
 
-    async def submit_insight(content: str) -> dict:
-        """Add an insight to the RAGDoll insights collection (MCP-only). It is searchable via query_rag immediately.
+    async def submit_insight(
+        content: str,
+        sources: list[str] | None = None,
+        query_ids: list[int] | None = None,
+    ) -> dict:
+        """Save an insight to the RAGDoll insights collection (MCP-only). It is searchable via query_rag immediately.
 
-        Use this for a durable learning: a conclusion worth finding again, with the reasoning behind it.
+        Use it when the user asks you to save something. When a conversation reaches a durable conclusion the user
+        hasn't asked to save, offer to save it instead of saving on your own.
 
-        Input format (plain text with these section headers; only Insight is required):
+        Input format for content (plain text with these section headers; only Insight is required):
         - Topic: short title
         - Tags: comma-separated list
         - Insight: the learning itself, stated plainly (Conclusion also works)
@@ -169,10 +176,17 @@ def _make_mcp() -> "FastMCP":
         - Open questions: what's still unresolved (Open threads also works)
         - Confidence: 0-1
 
-        The statement and reasoning are embedded; results from the insights collection include an "insight" object with id, topic, tags, origin, and confidence.
+        Args:
+            content: The insight in the format above.
+            sources: The passages it rests on, as "collection:chunk_id" (e.g. "mufsd:61"), taken from the group and
+                chunk_id of query_rag results. These become its lineage, so it can be traced to the documents.
+                Citing an insights result ("insights:12") records that it builds on that insight.
+            query_ids: The query_id of each query_rag search whose results informed it.
+
+        The response reports how many passages and queries were linked, and lists any reference it couldn't resolve.
         """
         try:
-            return await asyncio.to_thread(submit_insight_text, content)
+            return await asyncio.to_thread(submit_insight_text, content, sources, query_ids)
         except Exception as e:
             logger.exception("submit_insight failed")
             return {"ok": False, "error": str(e)}

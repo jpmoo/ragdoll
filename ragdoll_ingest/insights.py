@@ -713,19 +713,91 @@ def parse_insight_text(raw: str) -> dict[str, Any] | None:
     return out
 
 
-def submit_insight_text(raw: str) -> dict[str, Any]:
-    """Create an agent-origin insight from header-formatted text (the MCP submission path)."""
+def _resolve_sources(
+    sources: list[str] | None,
+    query_ids: list[int] | None,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Turn "collection:chunk_id" references and query-log ids into lineage rows.
+
+    Returns (lineage, problems). A bad reference is reported, never fatal: an insight the owner asked to save
+    shouldn't be lost because one citation was mistyped.
+    """
+    # Imported here so the insights module doesn't pull in the query log for every caller
+    from .query_log import get_query
+    from .storage import _list_sync_groups, get_chunk_by_id
+
+    lineage: list[dict[str, Any]] = []
+    problems: list[str] = []
+    groups = set(_list_sync_groups())
+    for ref in dict.fromkeys(str(r).strip() for r in (sources or []) if str(r).strip()):
+        group, _, cid = ref.rpartition(":")
+        if not group or not cid.isdigit():
+            problems.append(f"{ref!r} is not in collection:chunk_id form")
+            continue
+        if group not in groups:
+            problems.append(f"{ref!r}: no collection named {group!r}")
+            continue
+        conn = _connect(group)
+        try:
+            chunk = get_chunk_by_id(conn, int(cid))
+        finally:
+            conn.close()
+        if not chunk:
+            problems.append(f"{ref!r}: no such chunk")
+            continue
+        if group == INSIGHTS_GROUP:
+            m = re.match(r"insight/(\d+)$", chunk["source_path"] or "")
+            if m:
+                lineage.append({"kind": "insight", "relation": "builds_on", "insight_id": int(m.group(1))})
+            continue
+        lineage.append({
+            "kind": "chunk", "relation": "supports", "group": group, "source_path": chunk["source_path"],
+            "chunk_id": chunk["id"], "chunk_index": chunk["chunk_index"], "text_snapshot": (chunk["text"] or "")[:2000],
+        })
+    for qid in dict.fromkeys(query_ids or []):
+        try:
+            q = get_query(int(qid))
+        except (TypeError, ValueError):
+            q = None
+        if not q:
+            problems.append(f"query {qid!r}: not in the query log")
+            continue
+        lineage.append({"kind": "query", "relation": "asked", "query_id": q["id"], "text_snapshot": q["prompt"]})
+    return lineage, problems
+
+
+def submit_insight_text(
+    raw: str,
+    sources: list[str] | None = None,
+    query_ids: list[int] | None = None,
+) -> dict[str, Any]:
+    """Create an agent-origin insight from header-formatted text (the MCP submission path).
+
+    sources are "collection:chunk_id" references to the passages the insight rests on; query_ids are the searches
+    that found them. Both become lineage, so an insight saved from a conversation can be traced like a nightly one.
+    """
     parsed = parse_insight_text(raw)
     if parsed is None:
         return {"ok": False, "error": "Could not parse insight: an 'Insight:' (or 'Conclusion:') section is required"}
-    insight = create_insight(origin="agent", actor="agent", reason="Submitted via MCP", **parsed)
-    return {
+    lineage, problems = _resolve_sources(sources, query_ids)
+    insight = create_insight(
+        origin="agent", actor="agent", reason="Submitted via MCP", lineage=lineage or None, **parsed
+    )
+    out: dict[str, Any] = {
         "ok": True,
         "insight_id": insight["id"],
         "source_path": insight["source_path"],
         "topic": insight["topic"] or "",
         "statement": insight["statement"],
+        "passages_linked": sum(1 for e in lineage if e["kind"] == "chunk"),
+        "insights_linked": sum(1 for e in lineage if e["kind"] == "insight"),
+        "queries_linked": sum(1 for e in lineage if e["kind"] == "query"),
     }
+    if not any(e["kind"] == "chunk" for e in lineage):
+        out["note"] = "Saved without any source passages; it can't be traced to the documents."
+    if problems:
+        out["unlinked"] = problems
+    return out
 
 
 def migrate_memory_collection(*, archive: bool = True, dry_run: bool = False) -> dict[str, Any]:

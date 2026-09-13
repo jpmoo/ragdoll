@@ -528,8 +528,9 @@ def _do_query(
             all_results, config.INSIGHTS_MAX_RESULTS if insights_cap is None else insights_cap
         )
 
+    query_id = None
     if log_as:
-        log_query(
+        query_id = log_query(
             transport=log_as, prompt=prompt, expanded_query=expanded, history=history, groups=groups,
             threshold=threshold, embedding=query_emb, results=all_results,
         )
@@ -542,6 +543,8 @@ def _do_query(
 
     out: dict[str, Any] = {
         "query": prompt,
+        # Lets a client tie what it does with these results (e.g. a saved insight) back to this search
+        "query_id": query_id,
         "expanded_query": expanded,
         "threshold": threshold,
         "documents": documents,
