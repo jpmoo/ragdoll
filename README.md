@@ -67,6 +67,8 @@ Optional env vars:
 | `RAGDOLL_CHUNK_LLM_TIMEOUT` | `300` | Seconds to wait for Ollama (chunk split, chart/table interpret) |
 | `RAGDOLL_ALWAYS_USE_DOCLING` | `false` | `true` = use [Docling](https://docling-project.github.io/docling/) for every supported file (PDF/DOCX/XLSX/PPTX/image); `false` = use Docling only for types RAGDoll doesn't cover (e.g. PPTX). Requires `pip install -e '.[docling]'`. |
 
+Thinking models (the Qwen3 family, for example) work in any of these roles. Every model call sends `think: false`, and falls back to Ollama's `thinking` field if a reply still lands there; without that, a thinking model's answer arrives in a field RAGDoll didn't read, so chunking came back empty and query expansion silently fell back to the raw prompt.
+
 ## Run manually
 
 ```bash

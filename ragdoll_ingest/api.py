@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from . import config
 from .embedder import cosine_similarity as _cosine_similarity, embed
 from .interpreters import CHUNK_ROLES
+from .ollama import generate
 from .insights import INSIGHTS_GROUP, get_insights_by_source_paths
 from .query_log import log_query
 from .storage import _connect, _list_sync_groups, clean_text, get_source_summary_by_path, init_db
@@ -56,13 +57,7 @@ def _expand_query(prompt: str, history: str | None) -> str:
         )
     
     try:
-        r = requests.post(
-            f"{url}/api/generate",
-            json={"model": model, "prompt": prompt_text, "stream": False},
-            timeout=config.CHUNK_LLM_TIMEOUT,
-        )
-        r.raise_for_status()
-        response = r.json().get("response", "").strip()
+        response = generate(prompt_text, model, url=url)
         if not response:
             # Fallback to original prompt if LLM fails
             logger.warning("Query expansion returned empty, using original prompt")
@@ -93,13 +88,7 @@ def _infer_chunk_roles(prompt: str, history: str | None) -> list[str]:
     model = config.QUERY_MODEL
     url = (config.OLLAMA_HOST or "").rstrip("/")
     try:
-        r = requests.post(
-            f"{url}/api/generate",
-            json={"model": model, "prompt": prompt_text, "stream": False},
-            timeout=config.CHUNK_LLM_TIMEOUT,
-        )
-        r.raise_for_status()
-        response = r.json().get("response", "").strip()
+        response = generate(prompt_text, model, url=url)
         if not response:
             return []
         if "```" in response:
@@ -430,13 +419,7 @@ def _synthesize_rag_results(
             "Instructions for the assistant:"
         )
     try:
-        r = requests.post(
-            f"{url}/api/generate",
-            json={"model": model, "prompt": prompt_text, "stream": False},
-            timeout=config.CHUNK_LLM_TIMEOUT,
-        )
-        r.raise_for_status()
-        response = r.json().get("response", "").strip()
+        response = generate(prompt_text, model, url=url)
         return response or "(Synthesis produced no text.)"
     except Exception as e:
         logger.warning("Synthesis failed: %s", e)

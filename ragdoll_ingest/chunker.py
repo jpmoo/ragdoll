@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 from . import config
+from .ollama import generate
 from .action_log import log as action_log
 
 logger = logging.getLogger(__name__)
@@ -101,20 +102,7 @@ def _get_semantic_chunk_texts_one(
     ) + window_text
 
     try:
-        import requests
-
-        r = requests.post(
-            f"{ollama_url.rstrip('/')}/api/generate",
-            json={
-                "model": config.CHUNK_MODEL,
-                "prompt": prompt,
-                "stream": False,
-                "format": "json",
-            },
-            timeout=config.CHUNK_LLM_TIMEOUT,
-        )
-        r.raise_for_status()
-        resp = (r.json().get("response") or "").strip()
+        resp = generate(prompt, config.CHUNK_MODEL, url=ollama_url, json_format=True)
         if not resp:
             return []
         if "```" in resp:
@@ -311,19 +299,7 @@ def _llm_split_long(text: str, ollama_url: str, group: str = "_root") -> list[st
     try:
         import requests
 
-        r = requests.post(
-            f"{ollama_url.rstrip('/')}/api/generate",
-            json={
-                "model": config.CHUNK_MODEL,
-                "prompt": prompt,
-                "stream": False,
-                "format": "json",
-            },
-            timeout=config.CHUNK_LLM_TIMEOUT,
-        )
-        r.raise_for_status()
-        data = r.json()
-        resp = (data.get("response") or "").strip()
+        resp = generate(prompt, config.CHUNK_MODEL, url=ollama_url, json_format=True)
         
         # Check for empty response before parsing
         if not resp:

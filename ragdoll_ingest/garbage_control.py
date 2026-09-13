@@ -10,6 +10,7 @@ from typing import Any
 import requests
 
 from . import config
+from .ollama import generate
 from .action_log import log as action_log
 
 logger = logging.getLogger(__name__)
@@ -153,13 +154,7 @@ def _llm_validate(chunk: dict[str, Any], group: str) -> bool:
     )
     
     try:
-        r = requests.post(
-            f"{url}/api/generate",
-            json={"model": model, "prompt": prompt, "stream": False},
-            timeout=30,
-        )
-        r.raise_for_status()
-        response = r.json().get("response", "").strip().upper()
+        response = generate(prompt, model, url=url, timeout=30).upper()
         return "YES" in response
     except Exception as e:
         logger.warning("LLM validation failed: %s, defaulting to accept", e)

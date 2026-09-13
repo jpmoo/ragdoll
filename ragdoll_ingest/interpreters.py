@@ -6,6 +6,7 @@ import re
 
 from . import config
 from .action_log import log as action_log
+from .ollama import generate
 
 logger = logging.getLogger(__name__)
 
@@ -24,17 +25,8 @@ AUTH = (
 def _ollama_text(prompt: str, model: str, group: str = "_root", timeout: int | None = None) -> str | None:
     """Call Ollama and return raw response text (no JSON required). Returns None on request failure or empty response."""
     timeout = timeout or config.CHUNK_LLM_TIMEOUT
-    url = (config.OLLAMA_HOST or "").rstrip("/")
     try:
-        import requests
-
-        r = requests.post(
-            f"{url}/api/generate",
-            json={"model": model, "prompt": prompt, "stream": False},
-            timeout=timeout,
-        )
-        r.raise_for_status()
-        out = (r.json().get("response") or "").strip() or None
+        out = generate(prompt, model, timeout=timeout) or None
         if out is None:
             logger.info("Ollama returned empty or whitespace-only response (model=%s)", model)
         return out

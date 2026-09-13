@@ -11,6 +11,7 @@ from typing import Any
 
 from . import config
 from .action_log import log as action_log
+from .ollama import generate
 
 logger = logging.getLogger(__name__)
 
@@ -127,20 +128,7 @@ def extract_key_phrases_llm(
         "Text:\n\n"
     ) + input_text
     try:
-        import requests
-
-        r = requests.post(
-            f"{url}/api/generate",
-            json={
-                "model": config.INTERPRET_MODEL,
-                "prompt": prompt,
-                "stream": False,
-                "format": "json",
-            },
-            timeout=config.CHUNK_LLM_TIMEOUT,
-        )
-        r.raise_for_status()
-        resp = (r.json().get("response") or "").strip()
+        resp = generate(prompt, config.INTERPRET_MODEL, url=url, json_format=True)
         if not resp:
             return []
         if "```" in resp:
